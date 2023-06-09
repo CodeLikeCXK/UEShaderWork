@@ -743,3 +743,10 @@ float3 SimpleClearCoatTransmittance(float NoL, float NoV, float Metallic, float3
 
 	return Transmittance;
 }
+
+//add a brdf for toon
+float F_Schlick_ScaleTerm(float3 SpecularColor, float VoH)
+{
+	float Fc = Pow5(1 - VoH); // 1 sub, 3 mul
+    return saturate( 50.0 * SpecularColor.g ) * Fc + (1 - Fc);
+}
