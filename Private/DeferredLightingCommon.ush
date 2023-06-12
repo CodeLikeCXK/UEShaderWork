@@ -360,7 +360,7 @@ FLightAccumulator AccumulateDynamicLighting(
 		Lighting.Specular *= LightData.SpecularScale;
 		//cel shading
 		float3 Attenuation = 1;
-		float offset = 1.0f; //experiment with this
+		float offset = 0.7f; //experiment with this
 		float TerminatorRange = saturate(GBuffer.Roughness - 0.5);
 		offset = offset * 2 - 1;
 		BRANCH
@@ -412,7 +412,7 @@ FLightAccumulator AccumulateDynamicLighting(
 
 			//cel shading
 			float3 Attenuation = 1;
-			float offset = 1.0f; //experiment with this
+			float offset = 0.7f; //experiment with this
 			float TerminatorRange = saturate(GBuffer.Roughness - 0.5);
 			offset = offset * 2 - 1;
 			BRANCH
