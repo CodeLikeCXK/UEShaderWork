@@ -358,8 +358,35 @@ FLightAccumulator AccumulateDynamicLighting(
 		Lighting = EvaluateBxDF(GBuffer, N, V, L, NoL, Shadow);
 
 		Lighting.Specular *= LightData.SpecularScale;
-				
-		LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		//cel shading
+		float3 Attenuation = 1;
+		float offset = 1.0f; //experiment with this
+		float TerminatorRange = saturate(GBuffer.Roughness - 0.5);
+		offset = offset * 2 - 1;
+		BRANCH
+		if (offset >= 1)
+		{
+			Attenuation = 1;
+		}
+		else
+		{
+			float NoL = (dot(N, L) + 1) / 2;
+			float NoLOffset = saturate(NoL + offset);
+			float LightAttenuationOffset = saturate( Shadow.SurfaceShadow + offset);
+			float ToonSurfaceShadow = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, LightAttenuationOffset);
+			Attenuation = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, NoLOffset) * ToonSurfaceShadow;
+		}
+		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		//cel shading on the shadows
+		float SurfaceMultiplier = LightMask * Shadow.SurfaceShadow;
+		float InvBands = GBuffer.Metallic;
+		float Band = ceil(1.0f / (float)InvBands);
+		float ValueItv = 1.0f / (Band - 1.0f);
+		SurfaceMultiplier = saturate(ValueItv * floor(SurfaceMultiplier / InvBands));
+		//end cel shading
+		//LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation);
+		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, LightData.Color * SurfaceMultiplier * Attenuation, bNeedsSeparateSubsurfaceLightAccumulation );
 		LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 #else // SHADING_PATH_MOBILE
 		BRANCH
@@ -401,10 +428,15 @@ FLightAccumulator AccumulateDynamicLighting(
 				float ToonSurfaceShadow = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, LightAttenuationOffset);
 				Attenuation = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, NoLOffset) * ToonSurfaceShadow;
 			}
+			float SurfaceMultiplier = LightMask * Shadow.SurfaceShadow;
+			float InvBands = GBuffer.Metallic;
+			float Band = ceil(1.0f / (float)InvBands);
+			float ValueItv = 1.0f / (Band - 1.0f);
+			SurfaceMultiplier = saturate(ValueItv * floor(SurfaceMultiplier / InvBands));
 			//end cel shading
-			float3 LightingDiffuse = Diffuse_Lambert( GBuffer.DiffuseColor ) * Lighting;
+			float3 LightingDiffuse = Diffuse_Lambert(GBuffer.DiffuseColor) * Lighting;
 			//LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation);
-			LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, MaskedLightColor * Shadow.SurfaceShadow * Attenuation, bNeedsSeparateSubsurfaceLightAccumulation);
+			LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, LightData.Color * SurfaceMultiplier * Attenuation, bNeedsSeparateSubsurfaceLightAccumulation);
 		#else
 			FDirectLighting Lighting;
 
@@ -435,7 +467,7 @@ FLightAccumulator AccumulateDynamicLighting(
 			//LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 			//cel shading on the shadows
 			float SurfaceMultiplier = LightMask * Shadow.SurfaceShadow;
-			float InvBands = GBuffer.CustomData.x;
+			float InvBands = GBuffer.Metallic;
 			float Band = ceil(1.0f / (float)InvBands);
 			float ValueItv = 1.0f / (Band - 1.0f);
 			SurfaceMultiplier = saturate(ValueItv * floor(SurfaceMultiplier / InvBands));
