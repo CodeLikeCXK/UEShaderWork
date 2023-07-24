@@ -368,7 +368,7 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 	float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
 
 	FDirectLighting Lighting;    
-	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.DiffuseColor) * saturate(ValueItv * floor(NoL / InvBands));
+	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
 
 	if (IsRectLight(AreaLight))
 		// Our Custom Shading Model is not supported in this scenario

@@ -436,7 +436,8 @@ FLightAccumulator AccumulateDynamicLighting(
 			}
 
 
-			float3 LightingDiffuse = Diffuse_Lambert(GBuffer.DiffuseColor) * Lighting;
+			//float3 LightingDiffuse = Diffuse_Lambert(GBuffer.DiffuseColor) * Lighting;
+			float3 LightingDiffuse = Diffuse_Lambert(GBuffer.BaseColor) * Lighting;
 			//LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation);
 			LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, LightData.Color * SurfaceMultiplier * Attenuation, bNeedsSeparateSubsurfaceLightAccumulation);
 		#else
