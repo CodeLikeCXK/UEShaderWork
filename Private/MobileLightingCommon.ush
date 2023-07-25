@@ -310,7 +310,7 @@ void AccumulateDirectionalLighting(FGBufferData GBuffer, float3 TranslatedWorldP
 		float ToonSurfaceShadow = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, LightAttenuationOffset);
 		Attenuation = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, NoLOffset) * ToonSurfaceShadow;
 	}
-	half4 ToonAttenuaion = half4(Attenuation.x, Attenuation.y, Attenuation.z, Attenuation.x);
+	half4 ToonAttenuaion = half4(Attenuation.x, Attenuation.y, Attenuation.z, 1);
 	//end cel shading
 
 #if TRANSLUCENCY_SH_LIGHTING
@@ -617,7 +617,7 @@ void AccumulateLightGridLocalLighting(const FCulledLightsGridData InLightGridDat
 			float ToonSurfaceShadow = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, LightAttenuationOffset);
 			Attenuation = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, NoLOffset) * ToonSurfaceShadow;
 		}
-		half4 ToonAttenuaion = half4(Attenuation.x, Attenuation.y, Attenuation.z, Attenuation.x);
+		half4 ToonAttenuaion = half4(Attenuation.x, Attenuation.y, Attenuation.z, 1);
 		//end cel shading
 		
 		float SurfaceShadow = 0;
