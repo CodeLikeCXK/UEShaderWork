@@ -288,7 +288,8 @@ void AccumulateDirectionalLighting(FGBufferData GBuffer, float3 TranslatedWorldP
 {
 	half DynamicShadowing = 1.0f;
 	FDeferredLightData LightData = GetDirectionalLightData(ScreenPosition, SvPosition, DynamicShadowFactors, DynamicShadowing);
-	half4 LightAttenuation = half4(1, 1, DynamicShadowing, DynamicShadowing);
+//no use
+	//half4 LightAttenuation = half4(1, 1, DynamicShadowing, DynamicShadowing);
 
 	//cel shading
 	float3 Attenuation = 1;
@@ -595,7 +596,8 @@ void AccumulateLightGridLocalLighting(const FCulledLightsGridData InLightGridDat
 
 		FDeferredLightData LightData = ConvertToDeferredLight_Mobile(LocalLight);
 
-		half4 LightAttenuation = half4(1, 1, DynamicShadowing, DynamicShadowing);
+		//no use
+		//half4 LightAttenuation = half4(1, 1, DynamicShadowing, DynamicShadowing);
 
 		//cel shading
 		float3 Attenuation = 1;
