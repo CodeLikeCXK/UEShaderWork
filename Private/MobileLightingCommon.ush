@@ -293,16 +293,17 @@ void AccumulateDirectionalLighting(FGBufferData GBuffer, float3 TranslatedWorldP
 
 	//cel shading
 	float3 Attenuation = 1;
-	float offset = 0.6f; //experiment with this
+	//float offset = 0.6f; //experiment with this
+	float offset = (GBuffer.Roughness - 0.5) * 2;
 	float TerminatorRange = saturate(GBuffer.Roughness - 0.5);
 	offset = offset * 2 - 1;
-//	BRANCH
-	//if (offset >= 1)
-	//{
-	//	Attenuation = 1;
-	//}
-//	else
-//	{
+	BRANCH
+	if (offset >= 1)
+	{
+		Attenuation = 1;
+	}
+	else
+	{
 		float3 N = GBuffer.WorldNormal;
 		float3 L = LightData.Direction;
 		float NoL = (dot(N, L) + 1) / 2;
@@ -310,7 +311,7 @@ void AccumulateDirectionalLighting(FGBufferData GBuffer, float3 TranslatedWorldP
 		float LightAttenuationOffset = saturate( DynamicShadowing + offset);
 		float ToonSurfaceShadow = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, LightAttenuationOffset);
 		Attenuation = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, NoLOffset) * ToonSurfaceShadow;
-	//}
+	}
 	half4 ToonAttenuaion = half4(Attenuation.x, Attenuation.y, Attenuation.z, Attenuation.z);
 	//end cel shading
 
@@ -601,16 +602,17 @@ void AccumulateLightGridLocalLighting(const FCulledLightsGridData InLightGridDat
 
 		//cel shading
 		float3 Attenuation = 1;
-		float offset = 0.5f; //experiment with this
+		//float offset = 0.5f; //experiment with this
+		float offset = (GBuffer.Roughness - 0.5) * 2;
 		float TerminatorRange = saturate(GBuffer.Roughness - 0.5);
 		offset = offset * 2 - 1;
-//		BRANCH
-//		if (offset >= 1)
-//		{
-//			Attenuation = 1;
-//		}
-//		else
-//		{
+		BRANCH
+		if (offset >= 1)
+		{
+			Attenuation = 1;
+		}
+		else
+		{
 			float3 N = GBuffer.WorldNormal;
 			float3 L = LightData.Direction;
 			float NoL = (dot(N, L) + 1) / 2;
@@ -618,7 +620,7 @@ void AccumulateLightGridLocalLighting(const FCulledLightsGridData InLightGridDat
 			float LightAttenuationOffset = saturate( DynamicShadowing + offset);
 			float ToonSurfaceShadow = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, LightAttenuationOffset);
 			Attenuation = smoothstep(0.5 - TerminatorRange, 0.5 + TerminatorRange, NoLOffset) * ToonSurfaceShadow;
-//		}
+		}
 		half4 ToonAttenuaion = half4(Attenuation.x, Attenuation.y, Attenuation.z, Attenuation.z);
 		//end cel shading
 		
