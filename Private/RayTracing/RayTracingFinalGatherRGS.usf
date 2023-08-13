@@ -12,7 +12,9 @@
 #include "RayTracingGatherPoints.ush"
 
 #include "../PathTracing/Light/PathTracingLightSampling.ush"
+#include "../PathTracing/Material/PathTracingMaterialSampling.ush"
 
+#define USE_PATHTRACING_MATERIALS 0
 #define USE_REJECTION_CRITERIA 0
 #define USE_REPROJECTION 1
 #define USE_NEIGHBOR_SAMPLES 1
@@ -242,6 +244,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingFinalGatherRGS)
 			TLAS,
 			RayFlags,
 			InstanceInclusionMask,
+			PixelCoord,
 			Ray);
 
 		// No hit indicates successful next-event connection
@@ -358,6 +361,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingFinalGatherRGS)
 					TLAS,
 					RayFlags,
 					InstanceInclusionMask,
+					PixelCoord,
 					Ray);
 
 				// No hit indicates successful next-event connection

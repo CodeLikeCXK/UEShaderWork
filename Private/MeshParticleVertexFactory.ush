@@ -240,8 +240,7 @@ FLWCMatrix GetParticlePrevTransform(FVertexFactoryInput Input)
 	FLWCMatrix FinalMat;
 	if ( MeshParticleVF.bUseLocalSpace )
 	{
-		float3 LWCTile = LWCGetTile(LWCGetOrigin(GetPrimitiveDataFromUniformBuffer().PreviousLocalToWorld));
-		FinalMat = MakeLWCMatrix(LWCTile, PrevTransform4x4);
+		FinalMat = LWCMultiply(PrevTransform4x4, GetPrimitiveDataFromUniformBuffer().PreviousLocalToWorld);
 	}
 	else
 	{

@@ -82,7 +82,7 @@ void TranslucencyVolumeTraceVoxelsCS(
 			float ConeHalfAngle;
 			GetProbeTracingUV(TraceTexelCoord, GetProbeTexelCenter(GridCoordinate), ProbeUV, ConeHalfAngle);
 
-			float3 WorldConeDirection = EquiAreaSphericalMapping(ProbeUV);
+			float3 WorldConeDirection = OctahedronToUnitVector(ProbeUV * 2.0 - 1.0);
 
 			float TraceDistance = MaxTraceDistance;
 			FRadianceCacheCoverage Coverage;
@@ -257,6 +257,8 @@ void TranslucencyVolumeIntegrateCS(
 
 		if (IsFroxelVisible(GridCoordinate))
 		{
+			float TotalWeight = 0;
+
 			for (uint Y = 0; Y < TranslucencyVolumeTracingOctahedronResolution; Y++)
 			{
 				for (uint X = 0; X < TranslucencyVolumeTracingOctahedronResolution; X++)
@@ -265,13 +267,15 @@ void TranslucencyVolumeIntegrateCS(
 
 					float2 ProbeTexelCenter = float2(0.5, 0.5);
 					float2 ProbeUV = (float2(X, Y) + ProbeTexelCenter) * InvTracingOctahedronResolution;
-					float3 WorldConeDirection = EquiAreaSphericalMapping(ProbeUV);
+					float3 WorldConeDirection = OctahedronToUnitVector(ProbeUV * 2.0 - 1.0);
 
-					Lighting = AddSH(Lighting, MulSH(SHBasisFunction(WorldConeDirection), TraceRadiance));
+					float SolidAngle = OctahedralSolidAngleLUT(ProbeUV, TranslucencyVolumeTracingOctahedronResolution);
+					Lighting = AddSH(Lighting, MulSH(SHBasisFunction(WorldConeDirection), TraceRadiance * SolidAngle));
+					TotalWeight += SolidAngle;
 				}
 			}
 
-			float NormalizeFactor = PI / TranslucencyVolumeTracingOctahedronResolution / TranslucencyVolumeTracingOctahedronResolution;
+			float NormalizeFactor = PI / TotalWeight;
 			Lighting.R.V *= NormalizeFactor;
 			Lighting.G.V *= NormalizeFactor;
 			Lighting.B.V *= NormalizeFactor;

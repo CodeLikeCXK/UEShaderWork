@@ -69,15 +69,14 @@ void TraceHairVoxels(
 	const float SceneDepth,
 	const float3 SampleTranslatedWorldPosition,
 	const float3 SampleDirection,
-	const float TraceDistance,
+	const float  TraceDistance,
 	const bool bIsReflectionTracing,
-	out bool bHit,
-	out float OutTransparency,
-	out float OutHitT)
+	inout FConeTraceResult OutTraceResult)
 {
+	const float MaxTraceDistance = min(TraceDistance, OutTraceResult.OpaqueHitDistance);
 	// Hair strands voxel to apply hair shadow on top of opaque geometry
 	float3 RayStart = SampleTranslatedWorldPosition;
-	float3 RayEnd = SampleTranslatedWorldPosition + SampleDirection * TraceDistance;
+	float3 RayEnd = SampleTranslatedWorldPosition + SampleDirection * MaxTraceDistance;
 	float4 Random = GetHairVoxelJitter2(PixelCoord.xy, View.StateFrameIndexMod8, VirtualVoxel.JitterMode);
 
 	// Jitter start position to mask/compensate coarse voxel resolution
@@ -96,7 +95,7 @@ void TraceHairVoxels(
 	FHairTraversalSettings TraversalSettings = InitHairTraversalSettings();
 	TraversalSettings.DensityScale = bIsReflectionTracing ? VirtualVoxel.DensityScale_Shadow : VirtualVoxel.DensityScale_Environment;
 	TraversalSettings.CountThreshold = 1;
-	TraversalSettings.DistanceThreshold = TraceDistance;
+	TraversalSettings.DistanceThreshold = MaxTraceDistance;
 	TraversalSettings.bDebugEnabled = false;
 	TraversalSettings.SteppingScale = bIsReflectionTracing ? VirtualVoxel.SteppingScale_Shadow : VirtualVoxel.SteppingScale_Environment;
 	TraversalSettings.Random = Random.xyz;
@@ -104,7 +103,7 @@ void TraceHairVoxels(
 	TraversalSettings.bUseOpaqueVisibility = false;
 
 	float Transparency = 1;
-	float HitT = TraceDistance;
+	float HitT = MaxTraceDistance;
 	bool bHasValidHitT = false;
 	const uint VoxelDescCount = VirtualVoxel.NodeDescCount;
 	for (uint VoxelDescIt = 0; Transparency > 0.01f && VoxelDescIt < VoxelDescCount; ++VoxelDescIt)
@@ -130,9 +129,12 @@ void TraceHairVoxels(
 		}
 	}
 
-	bHit = bHasValidHitT;
-	OutTransparency = Transparency;
-	OutHitT = HitT;
+	if (bHasValidHitT && HitT < MaxTraceDistance)
+	{
+		OutTraceResult.Lighting *= Transparency;
+		OutTraceResult.Transparency *= Transparency; // min(OutTraceResult.Transparency, Transparency);
+		OutTraceResult.OpaqueHitDistance = min(HitT, OutTraceResult.OpaqueHitDistance);
+	}
 }
 
 #endif // USE_HAIRSTRANDS_VOXEL

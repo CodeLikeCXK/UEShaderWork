@@ -24,7 +24,8 @@ void Main(
 	FVertexFactoryInput Input,
 	out FLumenCardVSToPS Output
 	)
-{
+{	
+	uint EyeIndex = 0;
 	ResolvedView = ResolveView();
 
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);

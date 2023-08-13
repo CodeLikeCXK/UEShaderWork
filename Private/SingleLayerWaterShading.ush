@@ -78,8 +78,6 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 
 #else  // !SINGLE_LAYER_WATER_MOBILE_SHADING
 
-		float IorWater = DielectricF0ToIor(DielectricSpecularToF0(Specular)); // Wrong if metal is set to >1. But we still keep refraction on the water surface nonetheless.
-
 		ViewportUV = clamp(ViewportUV, SceneWithoutSingleLayerWaterMinUV, SceneWithoutSingleLayerWaterMaxUV);
 
 		float PixelSceneDeviceZ = WaterSampleSceneDepthWithoutWater(
@@ -91,12 +89,12 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 
 		float PixelSceneDepth = ConvertFromDeviceZ(PixelSceneDeviceZ);
 		
-		FMaterialRefractionData RefractionData = GetMaterialRefraction(PixelMaterialInputs);
+		float2 Refraction = GetMaterialRefraction(PixelMaterialInputs); // X = IOR, Y = Refraction Bias
 		float2 BufferUVDistortion = ComputeBufferUVDistortion(
 			MaterialParameters, PixelMaterialInputs, ResolvedView,
-			MaterialParameters.WorldNormal, IorWater,
-			DistortionParams, ViewportUV, RefractionData, false, EyeIndex);
-		PostProcessUVDistortion(MaterialParameters, PixelMaterialInputs, PixelSceneDepth, BufferUVDistortion, RefractionData);
+			MaterialParameters.WorldNormal,
+			DistortionParams, ViewportUV, Refraction, false, EyeIndex);
+		PostProcessUVDistortion(MaterialParameters, PixelMaterialInputs, PixelSceneDepth, BufferUVDistortion, Refraction);
 		// Also reduce refraction according to water thickness
 		BufferUVDistortion *= saturate((PixelSceneDepth - WaterDepth) * 1.0 / 30.0f);// *(1 - saturate(WaterDepth * 1.0 / 2000.0f));
 
@@ -160,7 +158,8 @@ WaterVolumeLightingOutput EvaluateWaterVolumeLighting(
 			DirLightPhaseValue = IsotropicPhase();
 #else
 			float IorFrom = 1.0f; // assumes we come from air
-			const float relativeIOR = IorFrom / IorWater;
+			float IorTo   = DielectricF0ToIor(DielectricSpecularToF0(Specular)); // Wrong if metal is set to >1. But we still keep refraction on the water surface nonetheless.
+			const float relativeIOR = IorFrom / IorTo;
 			float3 UnderWaterRayDir = 0.0f;
 			if (WaterRefract(MaterialParameters.CameraVector, MaterialParameters.WorldNormal, relativeIOR, UnderWaterRayDir))
 			{

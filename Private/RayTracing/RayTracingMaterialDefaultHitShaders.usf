@@ -3,7 +3,6 @@
 #include "../Common.ush"
 #include "RayTracingCommon.ush"
 
-#if IS_PAYLOAD_ENABLED(RT_PAYLOAD_TYPE_RAYTRACING_MATERIAL)
 RAY_TRACING_ENTRY_CLOSEST_HIT(OpaqueShadowCHS,
 	FPackedMaterialClosestHitPayload, PackedPayload,
 	FRayTracingIntersectionAttributes, Attributes)
@@ -23,13 +22,15 @@ RAY_TRACING_ENTRY_ANY_HIT(HiddenMaterialAHS,
 {
 	IgnoreHit();
 }
-#endif
 
-#if IS_PAYLOAD_ENABLED(RT_PAYLOAD_TYPE_DECALS)
+struct FDefaultCallableShaderParams
+{
+	int Param;
+};
+
 RAY_TRACING_ENTRY_CALLABLE(DefaultCallableShader,
-	FDecalShaderPayload, Params)
+	FDefaultCallableShaderParams, Params)
 {
 	// This shader serves only has a placeholder in RTPSO
 	// If RTPSO doesn't include a required shader, a NULL SBT entry should be used.
 }
-#endif

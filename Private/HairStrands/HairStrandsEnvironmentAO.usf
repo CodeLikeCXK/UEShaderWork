@@ -5,8 +5,6 @@
 #include "../DeferredShadingCommon.ush"  
 #include "../SceneTextureParameters.ush"
 #include "../PositionReconstructionCommon.ush"
-#include "../HairShadingCommon.ush"
-#include "../HairBsdf.ush"
 #include "HairStrandsCommon.ush"
 #include "HairStrandsVisibilityCommon.ush"
 #include "HairStrandsVoxelPageCommon.ush"

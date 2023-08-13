@@ -39,7 +39,6 @@
 #define REFLECTION_COMPOSITE_HAS_BOX_CAPTURES 1
 #define REFLECTION_COMPOSITE_HAS_SPHERE_CAPTURES 1
 #define ENABLE_SKY_LIGHT 1
-#define USE_HAIR_COMPLEX_TRANSMITTANCE 1
 
 #include "../Common.ush"
 #include "HairStrandsCommon.ush"
@@ -65,11 +64,11 @@
 
 #include "HairStrandsVisibilityCommon.ush"
 #include "HairStrandsVisibilityUtils.ush"
+#include "HairStrandsEnvironmentLightingCommon.ush"
 #include "HairStrandsVoxelPageCommon.ush"
 #include "HairStrandsDeepShadowCommon.ush"
 #include "HairStrandsDeepTransmittanceCommon.ush"
 #include "HairStrandsDeepTransmittanceDualScattering.ush"
-#include "HairStrandsEnvironmentLightingCommon.ush"
 
 #define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR_MIPMAP
 //#define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR
@@ -125,10 +124,11 @@ float3 GetStaticLighting(in FGBufferData GBuffer, float3 CameraDirection, float3
 	// Evaluation of the static lighting
 	if (bHasStaticLighting)
 	{
+		FHairTransmittanceData TransmittanceData = InitHairTransmittanceData(true);
 		float3 N = GBuffer.WorldNormal;
 		float3 V = CameraDirection;
-		float3 L = 0;
-		const float3 DiffuseColorForIndirect = EvaluateEnvHair(GBuffer, V, N, L /*out*/);
+		float3 L = normalize(V - N * dot(V, N));
+		const float3 DiffuseColorForIndirect = 2 * PI * HairShading(GBuffer, L, V, N, 1, TransmittanceData, 0, 0.2, uint2(0, 0));
 		const float3 DiffuseIndirectLighting = GetPrecomputedIndirectLighting(AbsoluteWorldPosition, L);
 
 		const float MaterialAO = 1;
@@ -146,12 +146,16 @@ float3 GatherRadiance(float3 RayDirection, float Roughness, uint2 PixelPosition,
 {
 #if PERMUTATION_LUMEN
 	// Lumen probe
+	float3 Random = 0;
+	float ConeHalfAngle = 0;
 	const float3 AbsoluteWorldPosition = TranslatedWorldPosition + LWCHackToFloat(PrimaryView.WorldCameraOrigin); // HAIR_LWC
 	FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(AbsoluteWorldPosition, RayDirection, .5f); // HAIR_LWC
+
 	if (Coverage.bValid)
 	{
-		return SampleRadianceCacheInterpolated(Coverage, AbsoluteWorldPosition, RayDirection, 0 /*ConeHalfAngle*/);
-	}	
+		return SampleRadianceCacheInterpolated(Coverage, AbsoluteWorldPosition, RayDirection, ConeHalfAngle);
+	}
+	
 	return 0;
 #else
 	const float IndirectIrradiance = 1;
@@ -728,9 +732,8 @@ float3 ReflectionEnvironmentSH(
 		View.HairScatteringLUTSampler,
 		View.HairComponents);
 
-	// Note: We don't reuse EvaluateEnvHair() here as we need to estimate occlusion with GetHairTransmittance(), and the 2 * PI gives too bright result 
-	// for some reason. It is set to 1 * PI for now until we get to the bottom of the issue.
-	const float3 IndirectDiffuseColor = min(1.f, PI * HairShading(GBuffer, L, V, N, 1/*Shadow*/, TransmittanceData, 0.f /*Backlit*/, 0.2/*Area*/, uint2(0, 0)/*Random*/));
+	bool bEvalMultiScatter = true;
+	float3 f_s = HairShading(GBuffer, L, V, N, 1, TransmittanceData, 1, 0.2, uint2(0, 0));
 
 	// This logic mimic the ReflecitonEnvironemtPixelShader.usf. Ideallyw we should share the same
 	// code/path, but the various permutation make the code a bit obscure
@@ -739,7 +742,7 @@ float3 ReflectionEnvironmentSH(
 	{
 		// Probe lighting
 		const uint2  PixelPosition = SvPosition - ResolvedView.ViewRectMin.xy;
-		Lighting = View.PreExposure * GatherRadiance(L, GBuffer.Roughness, PixelPosition, GBuffer.Depth, TranslatedWorldPosition) * IndirectDiffuseColor;
+		Lighting = View.PreExposure * GatherRadiance(L, GBuffer.Roughness, PixelPosition, GBuffer.Depth, TranslatedWorldPosition) * f_s;
 	}
 #else // PERMUTATION_LUMEN
 	const float AmbientOcclusion = 1.0f;
@@ -826,7 +829,7 @@ void MainVS(
 
 #if LIGHTING_PS
 
-Buffer<uint> IndirectArgsBuffer;
+Buffer<uint4> IndirectArgsBuffer;
 
 void MainPS(
 	float4 SVPos : SV_POSITION,

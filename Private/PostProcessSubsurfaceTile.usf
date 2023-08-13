@@ -37,11 +37,15 @@ void BuildIndirectDispatchArgsCS(uint DT_ID : SV_DispatchThreadID)
 		int2 DestTextureSize = (ViewportSize + SUBSURFACE_TILE_SIZE * LINE_TEXEL_SIZE - 1)
 								/ (SUBSURFACE_TILE_SIZE * LINE_TEXEL_SIZE);
 
-		WriteDispatchIndirectArgs(RWIndirectDispatchArgsBuffer, DT_ID, DestTextureSize.x, DestTextureSize.y, 1);
+		RWIndirectDispatchArgsBuffer[DT_ID * 3 + 0] = DestTextureSize.x;
+		RWIndirectDispatchArgsBuffer[DT_ID * 3 + 1] = DestTextureSize.y;
+		RWIndirectDispatchArgsBuffer[DT_ID * 3 + 2] = 1;
 	}
 	else
 	{
-		WriteDispatchIndirectArgs(RWIndirectDispatchArgsBuffer, DT_ID, 0, 0, 0);
+		RWIndirectDispatchArgsBuffer[DT_ID * 3 + 0] = 0;
+		RWIndirectDispatchArgsBuffer[DT_ID * 3 + 1] = 0;
+		RWIndirectDispatchArgsBuffer[DT_ID * 3 + 2] = 0; 
 	}
 }
 

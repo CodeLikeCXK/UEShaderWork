@@ -105,10 +105,14 @@ void InitializeCardTileIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThread
 		uint NumCardTiles = CardTileAllocator[0];
 
 		// One thread per card tile
-		WriteDispatchIndirectArgs(RWDispatchCardTilesIndirectArgs, 0, (NumCardTiles + 63) / 64, 1, 1);
+		RWDispatchCardTilesIndirectArgs[0] = (NumCardTiles + 63) / 64;
+		RWDispatchCardTilesIndirectArgs[1] = 1;
+		RWDispatchCardTilesIndirectArgs[2] = 1;
 
 		// One thread group per card tile
-		WriteDispatchIndirectArgs(RWDispatchCardTilesIndirectArgs, 1, NumCardTiles, 1, 1);
+		RWDispatchCardTilesIndirectArgs[3] = NumCardTiles;
+		RWDispatchCardTilesIndirectArgs[4] = 1;
+		RWDispatchCardTilesIndirectArgs[5] = 1;
 	}
 }
 
@@ -496,10 +500,14 @@ void InitializeLightTileIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThrea
 		uint NumLightTiles = LightTileAllocator[0];
 
 		// NumTilesDiv1
-		WriteDispatchIndirectArgs(RWDispatchLightTilesIndirectArgs, 0, NumLightTiles, 1, 1);
+		RWDispatchLightTilesIndirectArgs[0] = NumLightTiles;
+		RWDispatchLightTilesIndirectArgs[1] = 1;
+		RWDispatchLightTilesIndirectArgs[2] = 1;
 
 		// NumTilesDiv64
-		WriteDispatchIndirectArgs(RWDispatchLightTilesIndirectArgs, 1, (NumLightTiles + 63) / 64, 1, 1);
+		RWDispatchLightTilesIndirectArgs[3 + 0] = (NumLightTiles + 63) / 64;
+		RWDispatchLightTilesIndirectArgs[3 + 1] = 1;
+		RWDispatchLightTilesIndirectArgs[3 + 2] = 1;
 	}
 
 	// Per light card tile array
@@ -508,7 +516,9 @@ void InitializeLightTileIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThrea
 		uint NumLightTilesPerLight = LightTileAllocatorPerLight[PerViewLightIndex];
 
 		// FRHIDispatchIndirectParameters
-		WriteDispatchIndirectArgs(RWDispatchTilesPerLightIndirectArgs, PerViewLightIndex, PerLightDispatchFactor * NumLightTilesPerLight, 1, 1);
+		RWDispatchTilesPerLightIndirectArgs[3 * PerViewLightIndex + 0] = PerLightDispatchFactor * NumLightTilesPerLight;
+		RWDispatchTilesPerLightIndirectArgs[3 * PerViewLightIndex + 1] = 1;
+		RWDispatchTilesPerLightIndirectArgs[3 * PerViewLightIndex + 2] = 1;
 
 		// FRHIDrawIndirectParameters
 		RWDrawTilesPerLightIndirectArgs[4 * PerViewLightIndex + 0] = VertexCountPerInstanceIndirect;

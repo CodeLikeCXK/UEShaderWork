@@ -11,8 +11,13 @@
 #include "../DistanceField/GlobalDistanceFieldUtils.ush"
 #include "../DistanceField/GlobalDistanceFieldObjectGrid.ush"
 #include "../DistanceFieldLightingShared.ush"
+#define USE_GLOBAL_GPU_SCENE_DATA 1
 #include "../SceneData.ush"
 #include "SurfaceCache/LumenSurfaceCacheSampling.ush"
+
+#ifndef VISIBILITY_ONLY_TRACE
+	#define VISIBILITY_ONLY_TRACE 0
+#endif
 
 #ifndef DEPTH_WEIGHTED_OIT_32_BIT
 	#define DEPTH_WEIGHTED_OIT_32_BIT 1
@@ -46,7 +51,7 @@ struct FConeTraceInput
 	float3 ConeTranslatedOrigin;
 	float3 ConeDirection;
 	
-	float ConeAngle; // View.EyeToPixelSpreadAngle or RayCone.Spread in HWRT world
+	float ConeAngle;
 	float TanConeAngle;
 
 	float ConeStartRadius;
@@ -124,14 +129,15 @@ struct FConeTraceInput
 
 struct FConeTraceResult
 {
+#if !VISIBILITY_ONLY_TRACE
 	float3 Lighting;
+#endif
 	float Transparency;
 	float NumSteps;
 	float NumOverlaps;
 	float OpaqueHitDistance;
 	float ExpandSurfaceAmount;
 	float3 Debug;
-	float3 GeometryWorldNormal;
 	float3 WorldVelocity;
 };
 
@@ -301,6 +307,7 @@ struct FTraceMeshSDFDerivedData
 	float3 HitNormal;
 	uint SceneInstanceIndex;
 	uint MeshCardsIndex;
+	float SurfaceCacheBias;
 	float3 WorldVelocity;
 };
 
@@ -331,6 +338,7 @@ FTraceMeshSDFDerivedData CalculateMeshSDFDerivedData(
 	float3 WorldGradient = mul(VolumeNormal, transpose((float3x3)DFObjectData.WorldToVolume.M));
 	float WorldGradientLength = length(WorldGradient);
 	TraceSDFData.HitNormal = WorldGradientLength > 0.0f ? WorldGradient / WorldGradientLength : 0;
+	TraceSDFData.SurfaceCacheBias = DFObjectData.bMostlyTwoSided ? 200.0f : 20.0f;
 
 	if (bCalculateHitVelocity)
 	{
@@ -665,7 +673,7 @@ void ConeTraceMeshSDFsAndInterpolateFromCards(
 			InterpolatePosition,
 			TraceSDFData.HitNormal,
 			InterpolateRadius,
-			/*SurfaceCacheBias*/ 20.0f,
+			TraceSDFData.SurfaceCacheBias,
 			TraceInput.bHiResSurface,
 			AtlasId).Lighting;
 		OutResult.Transparency = 0;
@@ -675,17 +683,16 @@ void ConeTraceMeshSDFsAndInterpolateFromCards(
 	OutResult.OpaqueHitDistance = TraceMeshSDFResult.HitDistance;
 }
 
-void EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceResult SDFTraceResult, inout FConeTraceResult ConeTraceResult)
+float4 EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceResult SDFTraceResult)
 {
-	const float3 SampleWorldPosition = TraceInput.ConeOrigin + TraceInput.ConeDirection * SDFTraceResult.HitTime;
-	const float3 SampleTranslatedWorldPosition = TraceInput.ConeTranslatedOrigin + TraceInput.ConeDirection * SDFTraceResult.HitTime;
-	const float3 SampleWorldNormal = ComputeGlobalDistanceFieldNormal(SampleTranslatedWorldPosition, SDFTraceResult.HitClipmapIndex, -TraceInput.ConeDirection);
-	const float ClipmapVoxelExtent = GlobalVolumeTranslatedCenterAndExtent[SDFTraceResult.HitClipmapIndex].w * GlobalVolumeTexelSize;
+	float3 SampleWorldPosition = TraceInput.ConeOrigin + TraceInput.ConeDirection * SDFTraceResult.HitTime;
+	float3 SampleWorldNormal = ComputeGlobalDistanceFieldNormal(SampleWorldPosition, SDFTraceResult.HitClipmapIndex, -TraceInput.ConeDirection);
+	float ClipmapVoxelExtent = GlobalVolumeCenterAndExtent[SDFTraceResult.HitClipmapIndex].w * GlobalVolumeTexelSize;
 
 	float RadianceFactor = 1.0f;
 	if (TraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance)
 	{
-		// Surface cache has limited resolution. Make sure we don't self-intersect and cause leaking or GI feedback loop
+		// Make sure we don't self-intersect and cause leaking
 		RadianceFactor = smoothstep(1.5f * ClipmapVoxelExtent, 2.0f * ClipmapVoxelExtent, SDFTraceResult.HitTime);
 	}
 
@@ -697,7 +704,7 @@ void EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceR
 	float3 LightingSum = 0.0f;
 	float SampleWeightSum = 0.0f;
 
-	float3 ClipmapVolumeUV = ComputeGlobalUV(SampleTranslatedWorldPosition, SDFTraceResult.HitClipmapIndex);
+	float3 ClipmapVolumeUV = ComputeGlobalUV(SampleWorldPosition, SDFTraceResult.HitClipmapIndex);
 	FGlobalDistanceFieldPage Page = GetGlobalDistanceFieldPage(ClipmapVolumeUV, SDFTraceResult.HitClipmapIndex);
 	if (RadianceFactor > 0.0f && Page.bValid)
 	{
@@ -717,7 +724,7 @@ void EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceR
 				{
 					uint2 ScreenCoord = TraceInput.DitherScreenCoord;
 					float SurfaceCacheBias = DISTANCE_FIELD_OBJECT_GRID_CARD_INTERPOLATION_RANGE_IN_VOXELS * ClipmapVoxelExtent;
-					float SampleRadius = TraceInput.ConeStartRadius + TraceInput.TanConeAngle * SDFTraceResult.HitTime;
+					float SampleRadius = 100.0f;
 
 					FSurfaceCacheSample SurfaceCacheSample = SampleLumenMeshCards(
 						ScreenCoord,
@@ -726,7 +733,7 @@ void EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceR
 						SampleWorldNormal,
 						SampleRadius,
 						SurfaceCacheBias,
-						TraceInput.bHiResSurface,
+						/*bHiResSurface*/ false,
 						FINAL_LIGHTING_ATLAS_ID
 					);
 
@@ -800,10 +807,7 @@ void EvaluateGlobalDistanceFieldHit(FConeTraceInput TraceInput, FGlobalSDFTraceR
 	}
 	#endif
 
-	ConeTraceResult.Lighting = LightingAndAlpha.xyz;
-	ConeTraceResult.Transparency = LightingAndAlpha.w;
-	ConeTraceResult.OpaqueHitDistance = SDFTraceResult.HitTime;
-	ConeTraceResult.GeometryWorldNormal = SampleWorldNormal;
+	return LightingAndAlpha;
 }
 
 /**
@@ -817,7 +821,7 @@ void RayTraceGlobalDistanceField(
 
 	// Trace SDF ray
 	{
-		FGlobalSDFTraceInput SDFTraceInput = SetupGlobalSDFTraceInput(TraceInput.ConeTranslatedOrigin, TraceInput.ConeDirection, TraceInput.MinTraceDistance, TraceInput.MaxTraceDistance, TraceInput.SDFStepFactor, TraceInput.MinSDFStepFactor);
+		FGlobalSDFTraceInput SDFTraceInput = SetupGlobalSDFTraceInput(TraceInput.ConeOrigin, TraceInput.ConeDirection, TraceInput.MinTraceDistance, TraceInput.MaxTraceDistance, TraceInput.SDFStepFactor, TraceInput.MinSDFStepFactor);
 		SDFTraceInput.bDitheredTransparency = TraceInput.bDitheredTransparency;
 		SDFTraceInput.DitherScreenCoord = TraceInput.DitherScreenCoord;
 		SDFTraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance = TraceInput.bExpandSurfaceUsingRayTimeInsteadOfMaxDistance;
@@ -826,17 +830,21 @@ void RayTraceGlobalDistanceField(
 		SDFTraceResult = RayTraceGlobalDistanceField(SDFTraceInput);
 	}
 
-	OutResult = (FConeTraceResult)0;
-	OutResult.Lighting = float3(0.0f, 0.0f, 0.0f);
-	OutResult.Transparency = 1.0f;
-	OutResult.NumSteps = SDFTraceResult.TotalStepsTaken;
-	OutResult.OpaqueHitDistance = TraceInput.MaxTraceDistance;
-	OutResult.ExpandSurfaceAmount = SDFTraceResult.ExpandSurfaceAmount;
+	float4 LightingAndAlpha = float4(0, 0, 0, 1);
 
 	if (GlobalSDFTraceResultIsHit(SDFTraceResult))
 	{
-		EvaluateGlobalDistanceFieldHit(TraceInput, SDFTraceResult, OutResult);
+		LightingAndAlpha = EvaluateGlobalDistanceFieldHit(TraceInput, SDFTraceResult);
 	}
+
+	OutResult = (FConeTraceResult)0;
+	#if !VISIBILITY_ONLY_TRACE
+		OutResult.Lighting = LightingAndAlpha.rgb;
+	#endif
+	OutResult.Transparency = LightingAndAlpha.a;
+	OutResult.NumSteps = SDFTraceResult.TotalStepsTaken;
+	OutResult.OpaqueHitDistance = GlobalSDFTraceResultIsHit(SDFTraceResult) ? SDFTraceResult.HitTime : TraceInput.MaxTraceDistance;
+	OutResult.ExpandSurfaceAmount = SDFTraceResult.ExpandSurfaceAmount;
 }
 
 float ComputeSquaredDistanceBetweenAABBs(float3 CenterA, float3 ExtentA, float3 CenterB, float3 ExtentB)
@@ -915,12 +923,12 @@ void ConeTraceLumenSceneVoxels(
 		FConeTraceResult VoxelTraceResult;
 		RayTraceGlobalDistanceField(VoxelTraceInput, VoxelTraceResult);
 
-		OutResult.Lighting += VoxelTraceResult.Lighting * OutResult.Transparency;
+		#if !VISIBILITY_ONLY_TRACE
+			OutResult.Lighting += VoxelTraceResult.Lighting * OutResult.Transparency;
+		#endif
 		OutResult.Transparency *= VoxelTraceResult.Transparency;
 		OutResult.NumSteps += VoxelTraceResult.NumSteps;
 		OutResult.OpaqueHitDistance = min(OutResult.OpaqueHitDistance, VoxelTraceResult.OpaqueHitDistance);
-		OutResult.GeometryWorldNormal = VoxelTraceResult.GeometryWorldNormal;
-		OutResult.WorldVelocity = VoxelTraceResult.WorldVelocity;
 	}
 #endif
 }
@@ -967,7 +975,9 @@ void ApplySkylightToTraceResult(float3 ConeDirection, inout FConeTraceResult Tra
 		float TanConeAngle = 0.0f;
 		float Roughness = TanConeAngleToRoughness(TanConeAngle);
 
-		TraceResult.Lighting += GetSkyLightReflection(ConeDirection, Roughness, SkyAverageBrightness) * TraceResult.Transparency;
+		#if !VISIBILITY_ONLY_TRACE
+			TraceResult.Lighting += GetSkyLightReflection(ConeDirection, Roughness, SkyAverageBrightness) * TraceResult.Transparency;
+		#endif
 		TraceResult.Transparency = 0;
 	}
 #endif
@@ -976,7 +986,6 @@ void ApplySkylightToTraceResult(float3 ConeDirection, inout FConeTraceResult Tra
 float SkylightLeaking;
 float SkylightLeakingRoughness;
 float InvFullSkylightLeakingDistance;
-uint  SampleHeightFog;
 
 float CalculateSkylightLeakingAmount(float HitDistance)
 {

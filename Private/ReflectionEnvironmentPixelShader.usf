@@ -109,16 +109,17 @@ float3 ReflectionEnvironment(FGBufferData GBuffer, float AmbientOcclusion, float
 	float3 R = 2 * dot( V, N ) * N - V;
 	float NoV = saturate( dot( N, V ) );
 
+	
 	//cel shade NoV (not necessary but eh why not)
 
 	float InvBands = 0;
 	float Band = 0;
 	float ValueItv = 0;
 	
-		InvBands = GBuffer.Metallic;
-		Band = ceil(1.0f / (float)InvBands);
-		ValueItv = 1.0f / (Band - 1.0f);
-		NoV = ValueItv * floor(NoV / InvBands);
+	InvBands = GBuffer.Metallic;
+	Band = ceil(1.0f / (float)InvBands);
+	ValueItv = 1.0f / (Band - 1.0f);
+	NoV = ValueItv * floor(NoV / InvBands);
 
 
 	// Point lobe in off-specular peak direction
@@ -171,12 +172,12 @@ float3 ReflectionEnvironment(FGBufferData GBuffer, float AmbientOcclusion, float
 
 	const FBxDFEnergyTerms EnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, NoV, GBuffer.SpecularColor);
 
-//add extra cel shading reflection
+	//add extra cel shading reflection
 	float3 Extra = View.PreExposure * GatherRadiance(Color.a, TranslatedWorldPosition, R, GBuffer.Roughness, BentNormal, IndirectIrradiance, GBuffer.ShadingModelID, NumCulledReflectionCaptures, DataStartIndex);
 	float3 LAB = LinearRGB_2_LAB(Extra, float3(0.5f, 0.5f, 0.5f));
 	LAB.x = saturate(ValueItv * floor( (LAB.x * 0.01f) / InvBands)) * 100.0f;
 	Color.rgb += LAB_2_LinearRGB(LAB, float3(0.5f, 0.5f, 0.5f));
-//end
+	//end
 	
 	//Top of regular reflection or bottom layer of clear coat.
 	Color.rgb += View.PreExposure * GatherRadiance(Color.a, TranslatedWorldPosition, R, GBuffer.Roughness, BentNormal, IndirectIrradiance, GBuffer.ShadingModelID, NumCulledReflectionCaptures, DataStartIndex);
@@ -310,7 +311,7 @@ void ReflectionEnvironmentSkyLighting(
 		float3 SSRTopLayerEnvBRDF = 0.0f;
 
 		const float CloudVolumetricAOShadow = GetCloudVolumetricAOShadow(TranslatedWorldPosition);
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, Strata.bRoughDiffuse, Strata.PeelLayersAboveDepth, Strata.bRoughnessTracking);
+		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, Strata.bRoughDiffuse, Strata.PeelLayersAboveDepth);
 
 		const bool bEnableSpecular = ReflectionStruct.SkyLightParameters.y > 0.0f;
 

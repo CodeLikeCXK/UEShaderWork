@@ -45,7 +45,9 @@ void MainCS(uint GroupThreadIndex : SV_GroupIndex)
 {
 	if (GroupThreadIndex < FILTER_TILE_CLASSIFY_COUNT)
 	{
-		WriteDispatchIndirectArgs(DispatchParametersOutput, GroupThreadIndex, TileListsSizeBuffer[GroupThreadIndex], 1, 1);
+		DispatchParametersOutput[3 * GroupThreadIndex + 0] = TileListsSizeBuffer[GroupThreadIndex];
+		DispatchParametersOutput[3 * GroupThreadIndex + 1] = 1;
+		DispatchParametersOutput[3 * GroupThreadIndex + 2] = 1;
 	}
 }
 

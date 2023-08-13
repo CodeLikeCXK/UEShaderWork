@@ -81,10 +81,9 @@ void WriteOutMaterial(
 	in float3 Normal
 #if STRATA_ENABLED
 	, inout float4 OutGBufferA
-	, inout uint StrataMat0
-	, inout uint StrataMat1
-	, inout uint StrataMat2
-	, inout STRATA_TOP_LAYER_TYPE StrataTopLayerData
+	, inout uint OutGBufferB
+	, inout uint OutGBufferC
+	, inout uint OutGBufferD
 	, inout uint OutGBufferE
 #else
 	, inout float4 OutGBufferA
@@ -97,10 +96,6 @@ void WriteOutMaterial(
 )
 {
 #if STRATA_ENABLED
-
-#if STRATA_BASE_PASS_MRT_OUTPUT_COUNT!=3
-#error Please update debug probe MRT code.
-#endif
 
 	FStrataPixelHeader StrataPixelHeader = InitialiseStrataPixelHeader();
 	StrataPixelHeader.StrataTree = GetInitialisedStrataTree();
@@ -116,9 +111,14 @@ void WriteOutMaterial(
 	FStrataPixelFootprint PixelFootprint = (FStrataPixelFootprint)0;
 	FStrataData StrataSlabData = GetStrataSlabBSDF(
 		/**FStrataPixelFootprint PixelFootprint */PixelFootprint,
-		/*float3 DiffuseAlbedo					*/ComputeDiffuseAlbedo(BaseColor, Metallic),
-		/*float3 F0								*/ComputeF0(Specular, BaseColor, Metallic),
-		/*float3 F90							*/1.0f,
+		/*float UseMetalness					*/true,
+		/*float3 BaseColor						*/BaseColor,
+		/*float3 EdgeColor						*/1.0f,
+		/*float Specular						*/Specular,
+		/*float Metallic						*/Metallic,
+		/*float3 DiffuseAlbedo					*/0.0f,
+		/*float3 F0								*/0.0f,
+		/*float3 F90							*/0.0f,
 		/*float Roughness						*/Roughness,
 		/*float Anisotropy						*/0.0f,
 		/*float SSSProfileID					*/0.0f,
@@ -132,9 +132,7 @@ void WriteOutMaterial(
 		/*flaot SecondRoughnessAsSimpleClearCoat*/0.0f,
 		/*float FuzzAmount						*/0.0f,
 		/*float3 FuzzColor						*/0.0f,
-		/*float FuzzRoughness					*/0.0f,
 		/*float Thickness						*/0.0f,
-		/*bool bIsThinSurface					*/false,
 		/*uint SharedLocalBasisIndex			*/SharedLocalBasisIndex,
 		/*inout uint SharedLocalBasisTypes		*/StrataPixelHeader.SharedLocalBases.Types);
 
@@ -150,7 +148,7 @@ void WriteOutMaterial(
 	float3 EmissiveLuminance = 0.0f;
 	bool bStrataSubsurfaceEnable = false;
 	const float Dither = 0.0f;
-	const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, bRoughDiffuse, 0/*PeelLayersAboveDepth*/, false/*bRoughnessTracking*/);
+	const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, bRoughDiffuse, 0/*PeelLayersAboveDepth*/);
 
 	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelCoord, uint2(ResolvedView.BufferSizeAndInvSize.xy), MaxBytesPerPixel);
 	FRWStrataMaterialContainer RWStrataMaterialContainer = InitialiseRWStrataMaterialContainer(MaterialTextureArrayUAV);
@@ -164,12 +162,11 @@ void WriteOutMaterial(
 		SSSData, TopLayerData, OpaqueRoughRefractionData);
 
 	// Write out MRTs. Note: this only works for deferred with basepassvelocity off
-	OutGBufferA			= 0;
-	StrataMat0			= RWStrataMaterialContainer.MaterialRenderTargets[0];
-	StrataMat1			= RWStrataMaterialContainer.MaterialRenderTargets[1];
-	StrataMat2			= RWStrataMaterialContainer.MaterialRenderTargets[2];
-	StrataTopLayerData	= StrataPackTopLayerData(TopLayerData);
-	OutGBufferE			= 0;
+	OutGBufferA = 0;
+	OutGBufferB = RWStrataMaterialContainer.MaterialRenderTargets[0];
+	OutGBufferC = RWStrataMaterialContainer.MaterialRenderTargets[1];
+	OutGBufferD = StrataPackTopLayerData(TopLayerData);
+	OutGBufferE = 0;
 
 #else // STRATA_ENABLED
 
@@ -200,12 +197,11 @@ void MainPS(
 	, out float4 OutColor		: SV_Target0
 #if PERMUTATION_PASS == RENDER_BASEPASS
 	#if STRATA_ENABLED
-	, out float4 OutGBufferA						: SV_Target2
-	, out uint StrataMat0							: SV_Target3
-	, out uint StrataMat1							: SV_Target4
-	, out uint StrataMat2							: SV_Target5
-	, out STRATA_TOP_LAYER_TYPE StrataTopLayerData	: SV_Target6
-	, out uint OutGBufferE							: SV_Target7
+	, out float4 OutGBufferA : SV_Target1
+	, out uint OutGBufferB : SV_Target2
+	, out uint OutGBufferC : SV_Target3
+	, out uint OutGBufferD : SV_Target4
+	, out uint OutGBufferE : SV_Target5
 	#else
 	, out float4 OutGBufferA	: SV_Target1
 	, out float4 OutGBufferB	: SV_Target2
@@ -221,20 +217,11 @@ void MainPS(
 {
 	OutColor = 0.f;
 #if PERMUTATION_PASS == RENDER_BASEPASS
-#if STRATA_ENABLED
-	OutGBufferA = 0;
-	StrataMat0 = 0;
-	StrataMat1 = 0;
-	StrataMat2 = 0;
-	StrataTopLayerData = 0;
-	OutGBufferE = 0;
-#else
 	OutGBufferA = 0;
 	OutGBufferB = 0;
 	OutGBufferC = 0;
 	OutGBufferD = 0;
 	OutGBufferE = 0;
-#endif
 #endif
 
 	ResolvedView = ResolveView();
@@ -250,14 +237,14 @@ void MainPS(
 #if PERMUTATION_ILLUMINANCEMETER /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	// In this case we want to show a small patch in front of the camera with pure white albedo.
-	// That is a way to measure the illuminance at the camera position, on the hemisphere pointing towards the back of the camera.
+	// That is a way to measure the illuminance at the camera position, on the hemisphere pointing otwards the back of the camera.
 
 	const float DeviceZ = 0.999999f;
 
 	// IlluminanceMeter variables must match the one in PostProcessVisualizeHDR.usf
-	const float  IlluminanceMeterSize = 20 * View.ResolutionFractionAndInv.x;
+	const float  IlluminanceMeterSize = 20;
 	const float  IlluminanceMeterHalfSize = IlluminanceMeterSize / 2;
-	const float2 IlluminanceMeterCenter = View.ViewSizeAndInvSize.xy * 0.5f - uint2(0, 100) * View.ResolutionFractionAndInv.x;
+	const float2 IlluminanceMeterCenter = View.ViewSizeAndInvSize.xy * 0.5f - uint2(0, 100);
 
 	if(all(PixelCoord > (IlluminanceMeterCenter - IlluminanceMeterHalfSize)) && all(PixelCoord < (IlluminanceMeterCenter + IlluminanceMeterHalfSize)))
 	{
@@ -302,21 +289,11 @@ void MainPS(
 				Roughness,
 				IndirectIrradianceAndAO,
 				WorldNormal,
-			#if STRATA_ENABLED
-				OutGBufferA,
-				StrataMat0,
-				StrataMat1,
-				StrataMat2,
-				StrataTopLayerData,
-				OutGBufferE
-			#else
 				OutGBufferA,
 				OutGBufferB,
 				OutGBufferC,
 				OutGBufferD,
-				OutGBufferE
-			#endif
-			);
+				OutGBufferE);
 		}
 	#endif
 
@@ -514,28 +491,12 @@ void MainPS(
 			Roughness,
 			IndirectIrradianceAndAO,
 			WorldNormal,
-		#if STRATA_ENABLED
-			OutGBufferA,
-			StrataMat0,
-			StrataMat1,
-			StrataMat2,
-			StrataTopLayerData,
-			OutGBufferE
-		#else
 			OutGBufferA,
 			OutGBufferB,
 			OutGBufferC,
 			OutGBufferD,
-			OutGBufferE
-		#endif
-		);
+			OutGBufferE);
 	}
-#if STRATA_ENABLED
-	else
-	{
-		discard;
-	}
-#endif
 
 	OutColor = 0.0f;
 

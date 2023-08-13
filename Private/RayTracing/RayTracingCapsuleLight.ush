@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "../LightData.ush"
+#include "../LightShaderParameters.ush"
 #include "../CapsuleLightSampling.ush"
 
 bool GenerateCapsuleLightOcclusionRayWithSolidAngleSampling(

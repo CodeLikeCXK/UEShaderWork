@@ -8,7 +8,6 @@
 #include "../SceneTextureParameters.ush"
 #include "LumenRadianceCacheMarkCommon.ush"
 #include "LumenRadianceCacheCommon.ush"
-#include "LumenReflectionsCombine.ush"
 #include "../ClearCoatCommon.ush"
 #include "../ReflectionEnvironmentShared.ush"
 
@@ -75,6 +74,8 @@ void MarkRadianceProbesUsedByGBufferCS(
 
 RWTexture2D<float4> RWDiffuseIndirect;
 RWTexture2D<float3> RWRoughSpecularIndirect;
+float MaxRoughnessToTrace;
+float RoughnessFadeLength;
 float ProbeOcclusionViewBias;
 float ProbeOcclusionNormalBias;
 
@@ -116,8 +117,9 @@ void IrradianceFieldGatherCS(
 #define COMPUTE_ROUGH_SPECULAR 1
 #if COMPUTE_ROUGH_SPECULAR
 
-			const float LumenSpecularRayAlpha = LumenCombineReflectionsAlpha(Material.Roughness, HasBackfaceDiffuse(Material));
-			if (LumenSpecularRayAlpha < 1.0f || IsClearCoat(Material))
+			float MinRoughnessForRoughSpecular = MaxRoughnessToTrace - RoughnessFadeLength;
+
+			if (Material.Roughness >= MinRoughnessForRoughSpecular || IsClearCoat(Material))
 			{
 				//GBufferData.WorldNormal = GetClearCoatBottomNormal(GBufferData, GBufferData.WorldNormal);
 				//float ReflectionVector = reflect(-V, GBufferData.WorldNormal);

@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "../Common.ush"
-#include "../HairShadingCommon.ush"
+
 /////////////////////////////////////////////////////////////////////////////////////////
 // Visualize hair strands data as full screen view mode (BaseColor, Tangent, Roughness, ...)
 
@@ -670,6 +670,18 @@ void VisualizeDomPS(
 #include "HairStrandsDeepShadowCommonStruct.ush"
 #include "HairStrandsAABBCommon.ush"
 
+void PrintBool(inout FShaderPrintContext Ctx, bool In)
+{
+	if (In)
+	{
+		Print(Ctx, TEXT("Yes  "), FontGreen);
+	}
+	else
+	{
+		Print(Ctx, TEXT("No   "), FontRed);
+	}
+}
+
 uint AllocatedSlotCount;
 uint MacroGroupCount;
 uint bViewRectOptimizeEnabled;
@@ -1066,8 +1078,7 @@ int2					MaxResolution;
 uint					InstanceCount;
 uint					InstanceCount_StrandsPrimaryView;
 uint					InstanceCount_StrandsShadowView;
-uint					InstanceCount_CardsOrMeshesPrimaryView;
-uint					InstanceCount_CardsOrMeshesShadowView;
+uint					InstanceCount_CardsOrMeshes;
 
 Buffer<uint>			Infos;
 
@@ -1240,20 +1251,16 @@ void MainCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_Dispatc
 	Newline(Context);
 
 	{
-		Print(Context, TEXT("Total Strand (primary)        : "), FontWhite);
+		Print(Context, TEXT("Total Strand primary: "), FontWhite);
 		Print(Context,InstanceCount_StrandsPrimaryView, FontYellow, 8);
 		Newline(Context);
 
-		Print(Context, TEXT("Total Strand (shadow)         : "), FontWhite);
+		Print(Context, TEXT("Total Strand shadow : "), FontWhite);
 		Print(Context,InstanceCount_StrandsShadowView, FontYellow, 8);
 		Newline(Context);
 
-		Print(Context, TEXT("Total Cards / Meshes (primary): "), FontWhite);
-		Print(Context,InstanceCount_CardsOrMeshesPrimaryView, FontYellow, 8);
-		Newline(Context);
-
-		Print(Context, TEXT("Total Cards / Meshes (shadow) : "), FontWhite);
-		Print(Context, InstanceCount_CardsOrMeshesShadowView, FontYellow, 8);
+		Print(Context, TEXT("Total Cards / Meshes: "), FontWhite);
+		Print(Context,InstanceCount_CardsOrMeshes, FontYellow, 8);
 		Newline(Context);
 	}
 	Newline(Context);
@@ -1289,9 +1296,9 @@ void MainCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_Dispatc
 		Print(Context, TEXT(" "));
 
 		// Binding
-		if (Info.BindingType == 0)		{ Print(Context, TEXT("None    "), FontTurquoise); }
+		if (Info.BindingType == 0)		{ Print(Context, TEXT("Skinned "), FontTurquoise); }
 		else if (Info.BindingType == 1)	{ Print(Context, TEXT("Rigid   "), FontTurquoise); }
-		else if (Info.BindingType == 2)	{ Print(Context, TEXT("Skinned "), FontTurquoise); }
+		else if (Info.BindingType == 2)	{ Print(Context, TEXT("None    "), FontTurquoise); }
 
 		// Sim
 		if (Info.bHasSim)

@@ -10,10 +10,8 @@
 #include "../LightGridCommon.ush"
 #include "../HairStrands/HairStrandsVisibilityCommon.ush"
 #include "../Visualization.ush"
-#include "../BlueNoise.ush"
 #include "VirtualShadowMapPageAccessCommon.ush"
 #include "VirtualShadowMapProjectionCommon.ush"
-#include "VirtualShadowMapProjectionFilter.ush"
 #include "VirtualShadowMapProjectionDirectional.ush"
 #include "VirtualShadowMapProjectionSpot.ush"
 #include "VirtualShadowMapTransmissionCommon.ush"
@@ -58,7 +56,7 @@ FProjectionShadingInfo GetProjectionShadingInfo(uint2 PixelPos)
 	const bool bIsProfile = StrataSubSurfaceHeaderGetIsProfile(SSSHeader);
 	Out.bIsSubsurface = bIsValid && !bIsProfile;
 
-	Out.bIsValid = IsStrataMaterial(StrataPixelHeader);
+	Out.bIsValid = IsStrataMaterial(TopLayerData);
 	Out.bIsHair = StrataGetBSDFType(StrataPixelHeader) == STRATA_BSDF_TYPE_HAIR;
 	Out.WorldNormal = TopLayerData.WorldNormal;
 #else
@@ -153,6 +151,23 @@ float3 GetEstimatedGeoWorldNormal(float3 TranslatedWorldPosition, float3 Shading
 	return EstimatedGeoWorldNormal;
 }
 
+FLightShaderParameters ConvertFromLocal( const FLocalLightData LightData )
+{
+	FLightShaderParameters Light = (FLightShaderParameters)0;
+	Light.TranslatedWorldPosition	= LightData.LightPositionAndInvRadius.xyz;
+	Light.InvRadius					= LightData.LightPositionAndInvRadius.w;
+	Light.Color						= LightData.LightColorAndFalloffExponent.xyz;
+	Light.FalloffExponent			= LightData.LightColorAndFalloffExponent.w;
+	Light.Direction					= LightData.LightDirectionAndShadowMask.xyz;
+	Light.Tangent					= LightData.LightTangentAndSoftSourceRadius.xyz;
+	Light.SpotAngles				= LightData.SpotAnglesAndSourceRadiusPacked.xy;
+	Light.SpecularScale				= LightData.RectBarnDoorAndVirtualShadowMapIdAndSpecularScale.w;
+	Light.SourceRadius				= LightData.SpotAnglesAndSourceRadiusPacked.z;
+	Light.SoftSourceRadius			= LightData.LightTangentAndSoftSourceRadius.w;
+	Light.SourceLength				= f16tof32(asuint(LightData.SpotAnglesAndSourceRadiusPacked.w));
+	return Light;
+}
+
 float4 ComputeRandom4(uint2 PixelPosition)
 {
 	const uint InSeed = View.StateFrameIndexMod8;
@@ -167,6 +182,7 @@ int4 ProjectionRect;
 float ScreenRayLength;
 float NormalBias;
 float SubsurfaceMinSourceRadius;
+int SubsurfaceShadowMode;			// Temp for testing and A/B comparison
 int SMRTRayCount;					// 0 = off
 int SMRTSamplesPerRay;
 float SMRTRayLengthScale;			// Directional lights
@@ -174,7 +190,7 @@ float SMRTCotMaxRayAngleFromLight;	// Spot/point lights
 float SMRTTexelDitherScale;			// Currently only directional lights
 float SMRTExtrapolateSlope;
 float SMRTMaxSlopeBias;				// Currently only local lights
-uint SMRTAdaptiveRayCount;
+uint bSMRTUseAdaptiveRayCount;
 
 // One pass projection
 RWTexture2D< uint4 > OutShadowMaskBits;
@@ -204,8 +220,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 	float SceneDepth,
 	float ScreenRayLengthWorld,
 	float3 TranslatedWorldPosition,
-	const float Noise,
-	float SubsurfaceOpacity)
+	const float Noise)
 {
 	const bool bIsHairInput = InputType == INPUT_TYPE_HAIRSTRANDS;
 
@@ -223,15 +238,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 	float3 L = ToLight * InvDist;
 	
 	bool bInLightRadius = InvDist >= Light.InvRadius;
-	bool bInLightCone = SpotAttenuationMask(L, -Light.Direction, Light.SpotAngles) > 0.0f;
-
-	#if ONE_PASS_PROJECTION
-		// Hacky workaround for spot angles being quantized to 16-bit when they are loaded from the light grid!
-		// This avoids potential artifacts at cone edges, and in this path we have the tile culling to lessen the
-		// overhead. Still needs to be fixed though as it is not trivial overhead!
-		bInLightCone = true;
-	#endif
-
+	bool bInLightCone = dot( L, Light.Direction ) >= Light.SpotAngles.x;
 	bool bInLightRegion = bInLightRadius && bInLightCone;
 #endif // DIRECTIONAL_LIGHT
 
@@ -266,6 +273,8 @@ FVirtualShadowMapSampleResult ProjectLight(
 
 		if (SMRTRayCount > 0)
 		{
+			const bool bUseAdaptiveRayCount = bSMRTUseAdaptiveRayCount > 0;
+
 		#if DIRECTIONAL_LIGHT
 			Result = TraceDirectional(
 				VirtualShadowMapId,
@@ -282,7 +291,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 				WorldNormal,
 				SMRTTexelDitherScale,
 				SMRTExtrapolateSlope,
-				SMRTAdaptiveRayCount);
+				bUseAdaptiveRayCount);
 		#else
 			Result = TraceLocalLight(
 				VirtualShadowMapId,
@@ -300,7 +309,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 				SMRTTexelDitherScale,
 				SMRTExtrapolateSlope,
 				SMRTMaxSlopeBias,
-				SMRTAdaptiveRayCount);
+				bUseAdaptiveRayCount);
 		#endif // DIRECTIONAL_LIGHT
 		}
 		else
@@ -312,19 +321,7 @@ FVirtualShadowMapSampleResult ProjectLight(
 				WorldNormal);
 		}
 
-		if (SubsurfaceOpacity < 1.0f)
-		{
-			// We use a single term for both the shadow and "transmission shadow" in the VSM path to provide a
-			// higher quality filtered result on back faces and avoid artifacts at the point where normals flip.
-			// This is especially important for foliage as normals are often "warped" to provide softer shading
-			// and do not represent the underlying geometry accurately, so having a continuous shadow function
-			// is important.
-			Result.ShadowFactor = GetShadowFactorSubsurface(Result.ShadowFactor, Result.OccluderDistance, SubsurfaceOpacity);
-		}
-
 		//Result.GeneralDebug = GreenToRedTurbo(1.0f - (SMRTRayOffset / ScreenRayLengthWorld));
-		//Result.GeneralDebug = SpotAttenuation(-L, Light.Direction, Light.SpotAngles).xxx;
-		//Result.GeneralDebug = (Result.OccluderDistance / 20.0f).xxx;
 
 		// Hair strands voxel traversal to apply hair shadow on top of opaque geometry
 		#if HAS_HAIR_STRANDS
@@ -415,8 +412,6 @@ FVirtualShadowMapSampleResult ProjectLight(
 		}
 		#endif
 	}
-
-	FilterVirtualShadowMapSampleResult(PixelPos, Result);
 
 	return Result;
 }
@@ -556,23 +551,15 @@ void OutputVisualize( uint2 PixelPos, FVirtualShadowMapSampleResult Result )
 	}
 }
 
-#if USE_TILE_LIST
-Buffer<uint> TileListData;
-#endif
-
-[numthreads(WORK_TILE_SIZE, WORK_TILE_SIZE, 1)]
+[numthreads(8, 8, 1)]
 void VirtualShadowMapProjection(
 	uint3	GroupId				: SV_GroupID,
 	uint	GroupIndex			: SV_GroupIndex,
 	uint3	DispatchThreadId	: SV_DispatchThreadID )
 {
-#if USE_TILE_LIST
-	uint PackedTile = TileListData.Load(GroupId.x);
-	uint2 LocalPixelPos = WORK_TILE_SIZE * uint2(PackedTile & 0xFFFF, PackedTile >> 16u) + MortonDecode(GroupIndex);
-#else
 	// Morton order within a group so page access/atomics are more coherent and wave-swizzled gradients are possible.
-	uint2 LocalPixelPos = WORK_TILE_SIZE * GroupId.xy + MortonDecode( GroupIndex );
-#endif // USE_TILE_LIST
+	uint2 PixelCoord = DispatchThreadId.xy;
+	uint2 LocalPixelPos = 8 * GroupId.xy + MortonDecode( GroupIndex );
 	uint2 PixelPos = LocalPixelPos + uint2( ProjectionRect.xy );
 	if ( any( PixelPos >= uint2( ProjectionRect.zw ) ) )
 	{
@@ -600,7 +587,6 @@ void VirtualShadowMapProjection(
 	const float Noise = InterleavedGradientNoise( SvPosition.xy, View.StateFrameIndexMod8 );
 
 	const FProjectionShadingInfo ShadingInfo = GetProjectionShadingInfo(PixelPos);
-	const float SubsurfaceOpacity = bIsHairInput ? 1.0f : GetSubsurfaceOpacityFromGbuffer(PixelPos);
 
 	FVirtualShadowMapSampleResult VisualizeResult = InitVirtualShadowMapSampleResult();
 
@@ -632,8 +618,9 @@ void VirtualShadowMapProjection(
 				SceneDepth,
 				ScreenRayLengthWorld,
 				TranslatedWorldPosition,
-				Noise,
-				SubsurfaceOpacity);
+				Noise);
+
+			// NOTE: Subsurface opacity is handled in the clustered shading pass in the one pass projection path
 
 			PackShadowMask(ShadowMask, Result.ShadowFactor, Index);
 
@@ -652,15 +639,12 @@ void VirtualShadowMapProjection(
 		FLightShaderParameters Light = GetRootLightShaderParameters();
 
 		// Subsurface approximation
-		const float SubsurfaceOpacity = bIsHairInput ? 1.0f : GetSubsurfaceOpacityFromGbuffer(PixelPos);
-#if DIRECTIONAL_LIGHT
 		// Increases light source radius for subsurface material as the opacity reduces to emulates light diffusion.
-		// TODO: Does something similar make sense for local lights?
+		const float SubsurfaceOpacity = bIsHairInput ? 1.0f : GetSubsurfaceOpacityFromGbuffer( PixelPos );
 		if (SubsurfaceOpacity < 1.0f)
 		{
-			Light.SourceRadius = max(Light.SourceRadius, (1.0f - SubsurfaceOpacity) * SubsurfaceMinSourceRadius);
+			Light.SourceRadius = max(Light.SourceRadius, (1-SubsurfaceOpacity)*SubsurfaceMinSourceRadius);
 		}
-#endif
 
 		FVirtualShadowMapSampleResult Result = ProjectLight(
 			VirtualShadowMapId,
@@ -670,10 +654,26 @@ void VirtualShadowMapProjection(
 			SceneDepth,
 			ScreenRayLengthWorld,
 			TranslatedWorldPosition,
-			Noise,
-			SubsurfaceOpacity);
+			Noise);
+		
+		float TransmissionShadow = Result.ShadowFactor;
+		if ( SubsurfaceOpacity < 1.0f )
+		{
+			if (SubsurfaceShadowMode > 0)
+			{
+				TransmissionShadow = GetShadowFactorSubsurface(Result.ShadowFactor, Result.OccluderDistance, SubsurfaceOpacity);
+				Result.ShadowFactor = TransmissionShadow;
+			}
+			else
+			{
+				TransmissionShadow = ComputeSimpleSubsurfaceTransmissionFromVirtualShadowMap(
+					VirtualShadowMapId,
+					TranslatedWorldPosition,
+					SubsurfaceOpacity);
+			}
+		}
 
-		OutShadowFactor[ PixelPos ] = Result.ShadowFactor.xx;
+		OutShadowFactor[ PixelPos ] = float2( Result.ShadowFactor, TransmissionShadow );
 
 		if (VisualizeVirtualShadowMapId == VirtualShadowMapId)
 		{

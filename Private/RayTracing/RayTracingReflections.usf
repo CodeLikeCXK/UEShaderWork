@@ -158,6 +158,7 @@ float Transmit(in FRayDesc TransmissionRay, in uint2 PixelCoord, inout float3 Ou
 		InstanceInclusionMask,
 		TransmissionRay,
 		RayCone,
+		PixelCoord,
 		bEnableSkyLightContribution,
 		bIgnoreTranslucentMaterials);
 
@@ -187,6 +188,7 @@ float Transmit(in FRayDesc TransmissionRay, in uint2 PixelCoord, inout float3 Ou
 			RAY_TRACING_MASK_TRANSLUCENT,
 			TransmissionRay,
 			RayCone,
+			PixelCoord,
 			bEnableSkyLightContribution,
 			bIgnoreTranslucentMaterials);
 
@@ -646,6 +648,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingReflectionsRGS)
 						InstanceInclusionMask,
 						TopLayerRay,
 						RayCone,
+						PixelCoord,
 						bEnableSkyLightContribution);
 
 					// Trace separate ray for translucent objects

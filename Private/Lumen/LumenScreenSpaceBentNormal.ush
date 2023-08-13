@@ -2,7 +2,7 @@
 
 #pragma once
 
-uint UseShortRangeAO;
+uint UseScreenBentNormal;
 Texture2D<float3> ScreenBentNormal;
 
 float IrradianceBounce0Rescale(float AO)

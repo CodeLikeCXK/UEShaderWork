@@ -19,7 +19,6 @@ float ReflectionSmoothBias;
 // 0: Opaque, 1: SingleLayerWater, 2: FrontLayerTranslucency
 uint ReflectionPass;
 uint UseJitter;
-uint UseHighResSurface;
 
 // Note: negative if invalid ray
 Texture2D DownsampledDepth;
@@ -187,6 +186,6 @@ float ApplySmoothBias(float Roughness)
 		NewRoughness = Roughness * X * X * (3.0 - 2.0 * X);
 	}
 
-	// Only opaque and translucent reflections get the denoiser, otherwise force to mirror
-	return ReflectionPass == 0 || ReflectionPass == 2 ? NewRoughness : 0.0f;
+	// Only opaque reflections get the denoiser, force to mirror
+	return ReflectionPass == 0 ? NewRoughness : 0.0f;
 }

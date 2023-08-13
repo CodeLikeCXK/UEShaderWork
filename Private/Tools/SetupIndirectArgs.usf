@@ -13,5 +13,7 @@ void InitIndirectArgs1DCS(uint3 DTID : SV_DispatchThreadID)
 {
 	uint GroupCount = (InputCountBuffer[InputCountOffset] * Multiplier + Divisor - 1U) / Divisor;
 
-	WriteDispatchIndirectArgs(IndirectDispatchArgsOut, 0, GroupCount, 1, 1);
+	IndirectDispatchArgsOut[0] = GroupCount;
+	IndirectDispatchArgsOut[1] = 1;
+	IndirectDispatchArgsOut[2] = 1;
 }
