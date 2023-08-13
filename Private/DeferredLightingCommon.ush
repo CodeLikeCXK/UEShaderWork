@@ -444,7 +444,7 @@ FLightAccumulator AccumulateDynamicLighting(
 		
 		FDirectLighting Lighting = (FDirectLighting)0;
 
-		half NoL = max(0, dot(GBuffer.WorldNormal, L));
+		//half NoL = max(0, dot(GBuffer.WorldNormal, L));
 	#if TRANSLUCENCY_NON_DIRECTIONAL
 		NoL = 1.0f;
 	#endif
