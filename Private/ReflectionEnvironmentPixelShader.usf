@@ -31,6 +31,7 @@
 #include "LightGridCommon.ush"
 #include "SceneTextureParameters.ush"
 #include "ClearCoatCommon.ush"
+#include "ColorSpace.ush"
 #define REFLECTION_COMPOSITE_USE_BLENDED_REFLECTION_CAPTURES 1
 #define REFLECTION_COMPOSITE_SUPPORT_SKYLIGHT_BLEND 1
 #include "ReflectionEnvironmentComposite.ush"
@@ -196,9 +197,9 @@ float3 ReflectionEnvironment(FGBufferData GBuffer, float AmbientOcclusion, float
 
 	//add extra cel shading reflection
 	float3 Extra = View.PreExposure * GatherRadiance(Color.a, TranslatedWorldPosition, R, GBuffer.Roughness, BentNormal, IndirectIrradiance, GBuffer.ShadingModelID, NumCulledReflectionCaptures, DataStartIndex);
-	float3 LAB = LinearRGB_2_LAB(Extra, float3(0.5f, 0.5f, 0.5f));
+	float3 LAB = LinearRGB_2_LAB(Extra+ float3(0.5f, 0.5f, 0.5f));
 	LAB.x = saturate(ValueItv * floor( (LAB.x * 0.01f) / InvBands)) * 100.0f;
-	Color.rgb += LAB_2_LinearRGB(LAB, float3(0.5f, 0.5f, 0.5f));
+	Color.rgb += LAB_2_LinearRGB(LAB+ float3(0.5f, 0.5f, 0.5f));
 	//end
 	
 	//Top of regular reflection or bottom layer of clear coat.
