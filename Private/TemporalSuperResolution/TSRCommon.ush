@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#pragma once
+
 #include "../Common.ush"
 #include "../Random.ush"
 #include "../TextureSampling.ush"
@@ -11,7 +13,8 @@
 
 
 //------------------------------------------------------- RECOMPILE HASH
-// 2A42D2EF-728A-4AC9-825F-2DC009BE04B0
+
+#pragma message("UESHADERMETADATA_VERSION F3C5FF82-E809-4903-98CD-5CC7E2254C77")
 
 
 //------------------------------------------------------- COMPILER CONFIG
@@ -24,7 +27,9 @@
 
 #define DEBUG_OUTPUT 0
 
-#if PLATFORM_SUPPORTS_REAL_TYPES && 1
+#if defined(DIM_16BIT_VALU)
+	#define CONFIG_COMPILE_FP16 DIM_16BIT_VALU
+#elif PLATFORM_SUPPORTS_REAL_TYPES
 	#define CONFIG_COMPILE_FP16 1
 #else
 	#define CONFIG_COMPILE_FP16 0
@@ -38,13 +43,20 @@
 
 #define CONFIG_SCENE_COLOR_OVERFLOW 1
 
-#if POST_PROCESS_ALPHA
-	#define CONFIG_SCENE_COLOR_ALPHA 1
+#if defined(DIM_ALPHA_CHANNEL)
+	#define CONFIG_SCENE_COLOR_ALPHA DIM_ALPHA_CHANNEL
 #else
 	#define CONFIG_SCENE_COLOR_ALPHA 0
 #endif
 
 #define CONFIG_ENABLE_STOCASTIC_QUANTIZATION (!CONFIG_SCENE_COLOR_ALPHA)
+
+// DXC allows changing order between multiply and adds https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#precise-qualifier
+// which on 16bit, if linear color spaces ends up close to half(65504.0), this can go +inf on if the compiler transform a * 0.5 + b * 0.5 into (a + b) * 0.5.
+#define CONFIG_FP16_PRECISE_MULTIPLY_ORDER 1
+
+#define CONFIG_SUPPORT_ORTHO_VIEW 1
+
 
 //------------------------------------------------------- CONSTANTS
 
@@ -69,23 +81,14 @@
 
 #define MAX_PARALLAX_FACTOR 8.0
 
-// Size and payload size of the subpixel grid in the history
-#define SUB_PIXEL_GRID_SIZE 2
-#define SUB_PIXEL_COUNT (SUB_PIXEL_GRID_SIZE * SUB_PIXEL_GRID_SIZE)
-
-#define SUB_PIXEL_BIT_COUNT 4
-#define SUB_PIXEL_BIT_MASK ((1 << SUB_PIXEL_BIT_COUNT) - 1)
-
-#define SUB_PIXEL_PARALLAX_FACTOR_BIT_COUNT 4
-#define SUB_PIXEL_PARALLAX_FACTOR_BIT_OFFSET 0
-#define SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK ((1 << SUB_PIXEL_PARALLAX_FACTOR_BIT_COUNT) - 1)
-
 // Minimum number of sample of each texel when reprojecting the high frequency history.
 // Value too low causes area of low sample count to have pixel dominating too much in reprojection causing input res aliasing on texture details
 #define MIN_REPROJECTION_SAMPLE_COUNT 2.0
 
 // Minimum weight of a pixel in history.
 #define MIN_IMPLICIT_HISTORY_WEIGHT ceil(tsr_half(255.0) * rcp(tsr_half(MAX_SAMPLE_COUNT)) * tsr_half(MIN_REPROJECTION_SAMPLE_COUNT)) * rcp(tsr_half(255.0))
+
+#define SPATIAL_ANTI_ALIASER_MIN_LUMIMANCE 0.05
 
 
 // K = Center of the nearest input pixel.
@@ -174,6 +177,10 @@ static const uint kPlusIndexes3x3[5] = { 4, 1, 3, 7, 5 };
 	#define tsr_ushort2x2 uint16_t2x2
 	#define tsr_ushort3x2 uint16_t3x2
 	#define tsr_ushort4x2 uint16_t4x2
+	
+	#define as_tsr_short(x)  asint16(x)
+	#define as_tsr_ushort(x) asuint16(x)
+	#define as_tsr_half(x)   asfloat16(x)
 
 #else
 	#define tsr_half  float
@@ -202,6 +209,10 @@ static const uint kPlusIndexes3x3[5] = { 4, 1, 3, 7, 5 };
 	#define tsr_ushort2x2 uint2x2
 	#define tsr_ushort3x2 uint3x2
 	#define tsr_ushort4x2 uint4x2
+	
+	#define as_tsr_short(x)  asint(x)
+	#define as_tsr_ushort(x) asuint(x)
+	#define as_tsr_half(x)   asfloat(x)
 
 #endif
 
@@ -218,11 +229,6 @@ static const uint kPlusIndexes3x3[5] = { 4, 1, 3, 7, 5 };
 #endif
 
 
-#define tsr_subpixel_details uint
-#define tsr_subpixel_details2 uint2
-#define tsr_subpixel_payload uint // TODO: uint16_t
-#define tsr_subpixel_payload2 uint2 // TODO: uint16_t
-
 // Largest encodable normal number in a half used on console.
 static const tsr_half LargestNormalNumber = tsr_half(65504.0);
 
@@ -231,6 +237,10 @@ static const tsr_half3 LargestSceneColorRGB = (LargestNormalNumber * tsr_half(0.
 static const tsr_half4 LargestSceneColorRGBA = (LargestNormalNumber * tsr_half(0.25)).xxxx;
 static const tsr_half3 LargestSceneColorYCoCg = LargestNormalNumber.xxx;
 static const tsr_half4 LargestSceneColorYCoCgA = LargestNormalNumber.xxxx;
+
+// Weight of each channel for the computation of luminance.
+static const tsr_half kMoireLumaToChannel = tsr_half(3.0);
+static const tsr_half3 kMoireLumaWeights = rcp(kMoireLumaToChannel).xxx;
 
 
 //------------------------------------------------------- PARAMETERS
@@ -282,9 +292,8 @@ float2 PrevHistoryInfo_UVViewportSizeInverse;
 float2 PrevHistoryInfo_UVViewportBilinearMin;
 float2 PrevHistoryInfo_UVViewportBilinearMax;
 FScreenTransform ScreenPosToPrevHistoryBufferUV;
-FScreenTransform ScreenPosToPrevSubpixelDetails;
-float2 PrevSubpixelDetailsExtent;
 float HistoryPreExposureCorrection;
+float ResurrectionPreExposureCorrection;
 
 uint bCameraCut;
 
@@ -423,22 +432,9 @@ tsr_short2x2 ClampPixelOffset(
 	tsr_short2x2 SamplePixelPos,
 	int2 MinPixelPos, int2 MaxPixelPos)
 {
-	tsr_short2 SamplePixelPos0 = dpv_lo(SamplePixelPos);
-	tsr_short2 SamplePixelPos1 = dpv_hi(SamplePixelPos);
-
-	SamplePixelPos0.x = min(SamplePixelPos0.x, tsr_short(MaxPixelPos.x));
-	SamplePixelPos0.x = max(SamplePixelPos0.x, tsr_short(MinPixelPos.x));
-		
-	SamplePixelPos0.y = min(SamplePixelPos0.y, tsr_short(MaxPixelPos.y));
-	SamplePixelPos0.y = max(SamplePixelPos0.y, tsr_short(MinPixelPos.y));
-	
-	SamplePixelPos1.x = min(SamplePixelPos1.x, tsr_short(MaxPixelPos.x));
-	SamplePixelPos1.x = max(SamplePixelPos1.x, tsr_short(MinPixelPos.x));
-		
-	SamplePixelPos1.y = min(SamplePixelPos1.y, tsr_short(MaxPixelPos.y));
-	SamplePixelPos1.y = max(SamplePixelPos1.y, tsr_short(MinPixelPos.y));
-
-	return dpv_interleave_registers(SamplePixelPos0, SamplePixelPos1);
+	SamplePixelPos[0] = fastClamp(SamplePixelPos[0], tsr_short2(MinPixelPos.xx), tsr_short2(MaxPixelPos.xx));
+	SamplePixelPos[1] = fastClamp(SamplePixelPos[1], tsr_short2(MinPixelPos.yy), tsr_short2(MaxPixelPos.yy));
+	return SamplePixelPos;
 }
 
 CALL_SITE_DEBUGLOC
@@ -446,13 +442,7 @@ tsr_short2 ClampPixelOffset(
 	tsr_short2 SamplePixelPos,
 	int2 MinPixelPos, int2 MaxPixelPos)
 {
-	SamplePixelPos.x = min(SamplePixelPos.x, tsr_short(MaxPixelPos.x));
-	SamplePixelPos.x = max(SamplePixelPos.x, tsr_short(MinPixelPos.x));
-		
-	SamplePixelPos.y = min(SamplePixelPos.y, tsr_short(MaxPixelPos.y));
-	SamplePixelPos.y = max(SamplePixelPos.y, tsr_short(MinPixelPos.y));
-
-	return SamplePixelPos;
+	return fastClamp(SamplePixelPos, tsr_short2(MinPixelPos), tsr_short2(MaxPixelPos));
 }
 
 CALL_SITE_DEBUGLOC
@@ -598,17 +588,29 @@ float2 SafeRcp(float2 x)
 
 CALL_SITE_DEBUGLOC
 half SafeRcp(half x)
+#if PLATFORM_GPU_ARCH >= PLATFORM_GPU_ARCH_AMD_RDNA_2 && PLATFORM_GPU_ARCH <= PLATFORM_GPU_ARCH_AMD_LATTEST
 {
 	// If x=0.0, then MaxHalfFloat * 0.0 = 0.0
 	return min(rcp(x), half(MaxHalfFloat)) * saturate(x * asfloat16(uint16_t(0x7C00)));
 }
+#else
+{
+	return select(x > half(0.0), min(rcp(x), half(MaxHalfFloat)), half(0.0));
+}
+#endif
 
 CALL_SITE_DEBUGLOC
 half2 SafeRcp(half2 x)
+#if PLATFORM_GPU_ARCH >= PLATFORM_GPU_ARCH_AMD_RDNA_2 && PLATFORM_GPU_ARCH <= PLATFORM_GPU_ARCH_AMD_LATTEST
 {
 	// If x=0.0, then MaxHalfFloat * 0.0 = 0.0
 	return min(rcp(x), half(MaxHalfFloat)) * saturate(x * asfloat16(uint16_t(0x7C00)));
 }
+#else
+{
+	return select(x > half(0.0), min(rcp(x), half(MaxHalfFloat)), half(0.0));
+}
+#endif
 
 #endif
 
@@ -846,11 +848,10 @@ bool IsOffScreen(uint bCameraCut, float2 ScreenPos, tsr_half ParallaxRejectionMa
 }
 
 CALL_SITE_DEBUGLOC
-void IsOffScreenOrDisoccluded(uint bCameraCut, float2x2 ScreenPos, tsr_half2 ParallaxRejectionMask, out bool2 bIsOffScreen, out bool2 bIsDisoccluded)
+void IsOffScreenOrDisoccluded(uint bCameraCut, float2x2 ScreenPos, bool2 bIsParallaxRejected, out bool2 bIsOffScreen, out bool2 bIsDisoccluded)
 {
 	bool bIsCameraCut = bCameraCut != 0;
 	bool2 bIsOutOfBounds = max(abs(ScreenPos[0]), abs(ScreenPos[1])) >= 1.0;
-	bool2 bIsParallaxRejected = ParallaxRejectionMask < tsr_half(PARALLAX_REJECTION_MASK_THRESHOLD);
 
 	bIsOffScreen = or(bIsCameraCut, bIsOutOfBounds);
 	bIsDisoccluded = and(!bIsOffScreen, bIsParallaxRejected);
@@ -926,102 +927,6 @@ tsr_half MeasureRejectionFactor(
 		dpv_interleave_mono_registers(BackbufferQuantizationError)));
 }
 
-struct FSubpixelNeighborhood
-{
-	// 2x2 quad of subpixels grid
-	tsr_subpixel_details SampleArray[4];
-
-	// Offset of subpixel
-	uint2 SubpixelOffset;
-
-	// Offset of the closest subpixel
-	bool2 ClosestSubpixelOffset;
-};
-
-FSubpixelNeighborhood GatherPrevSubpixelNeighborhood(Texture2D<tsr_subpixel_details> PrevSubPixelDetailTexture, float2 PrevHistoryBufferUV)
-{
-	float2 PixelCoord = PrevHistoryBufferUV * PrevSubpixelDetailsExtent;
-	float2 TopLeftPixelCoord = floor(PixelCoord - 0.5) + 0.5;
-	
-	FSubpixelNeighborhood Neighborhood;
-	#if 1 // TODO
-	{
-		Neighborhood.SampleArray[0] = PrevSubPixelDetailTexture[uint2(TopLeftPixelCoord + float2(0.0, 0.0))];
-		Neighborhood.SampleArray[1] = PrevSubPixelDetailTexture[uint2(TopLeftPixelCoord + float2(1.0, 0.0))];
-		Neighborhood.SampleArray[2] = PrevSubPixelDetailTexture[uint2(TopLeftPixelCoord + float2(0.0, 1.0))];
-		Neighborhood.SampleArray[3] = PrevSubPixelDetailTexture[uint2(TopLeftPixelCoord + float2(1.0, 1.0))];
-	}
-	#else
-	{
-		// (-,+),(+,+),(+,-),(-,-),
-		/**
-		 *  3 2
-		 *  0 1
-		 */
-		uint4 Samples = PrevSubPixelDetailTexture.Gather(GlobalPointClampedSampler, PrevHistoryBufferUV);
-
-		Neighborhood.SampleArray[0] = Samples[3]; // 00
-		Neighborhood.SampleArray[1] = Samples[2]; // 10
-		Neighborhood.SampleArray[2] = Samples[0]; // 01
-		Neighborhood.SampleArray[3] = Samples[1]; // 11
-	}
-	#endif
-
-	tsr_half2 Interp = tsr_half2(PixelCoord - TopLeftPixelCoord);
-	Neighborhood.SubpixelOffset = uint2(round(Interp * 2.0));
-	Neighborhood.ClosestSubpixelOffset = Interp > 0.5;
-
-	return Neighborhood;
-}
-
-tsr_subpixel_payload GetSubpixelPayload(FSubpixelNeighborhood Neighborhood, uint SubpixelId)
-{
-	const uint2 SubpixelCoord = uint2(SubpixelId % SUB_PIXEL_GRID_SIZE, SubpixelId / SUB_PIXEL_GRID_SIZE);
-
-	uint2 InputSubpixelCoord = Neighborhood.SubpixelOffset + SubpixelCoord;
-	uint2 InputTexelCoord = InputSubpixelCoord / SUB_PIXEL_GRID_SIZE;
-	uint2 QuadSubpixelCoord = InputSubpixelCoord % SUB_PIXEL_GRID_SIZE;
-
-
-	uint QuadSampleId = dot(InputTexelCoord, uint2(1, 2));
-	tsr_subpixel_details InputSample = Neighborhood.SampleArray[QuadSampleId];
-
-	uint BitShift = SUB_PIXEL_BIT_COUNT * dot(QuadSubpixelCoord, uint2(1, SUB_PIXEL_GRID_SIZE));
-
-	tsr_subpixel_payload SubpixelPayload = tsr_subpixel_payload(InputSample >> BitShift) & SUB_PIXEL_BIT_MASK;
-
-	return SubpixelPayload;
-}
-
-tsr_subpixel_payload GetClosestSubpixelPayload(FSubpixelNeighborhood Neighborhood)
-{
-	uint QuadSampleId = dot(uint2(Neighborhood.ClosestSubpixelOffset), uint2(1, 2));
-	tsr_subpixel_details InputSample = Neighborhood.SampleArray[QuadSampleId];
-
-	uint BitShift = SUB_PIXEL_BIT_COUNT * (3 - QuadSampleId);
-
-	tsr_subpixel_payload SubpixelPayload = tsr_subpixel_payload(InputSample >> BitShift) & SUB_PIXEL_BIT_MASK;
-
-	return SubpixelPayload;
-}
-
-CALL_SITE_DEBUGLOC
-tsr_subpixel_payload CompressParallaxFactor(tsr_half ParallaxFactor)
-{
-	return clamp(
-		tsr_subpixel_payload((ParallaxFactor - tsr_half(1.0)) * tsr_half(float(SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK) / MAX_PARALLAX_FACTOR)),
-		tsr_subpixel_payload(0), tsr_subpixel_payload(SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK));
-}
-
-CALL_SITE_DEBUGLOC
-tsr_half UncompressParallaxFactor(tsr_subpixel_payload CompressedParallaxFactor)
-{
-	return 
-		tsr_half(CompressedParallaxFactor & SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK) *
-		tsr_half(MAX_PARALLAX_FACTOR / float(SUB_PIXEL_PARALLAX_FACTOR_BIT_MASK)) +
-		tsr_half(1.0);
-}
-
 CALL_SITE_DEBUGLOC
 tsr_half3x2 QuantizeForUNormRenderTarget(tsr_half3x2 Color, tsr_half E, const float3 QuantizationError)
 {
@@ -1090,8 +995,8 @@ uint2 EncodeSpatialAntiAliasingOffset(tsr_half2x2 TexelOffset)
 	tsr_half Multiply = tsr_half(float(Zero) / SPATIAL_ANTI_ALIASING_OFFSET_RANGE);
 
 	uint2 EncodedTexelOffset = 0;
-	EncodedTexelOffset |= clamp(uint2(int2(round(TexelOffset[0] * Multiply)) + int(1 + Zero)), uint(1), Mask) << 0;
-	EncodedTexelOffset |= clamp(uint2(int2(round(TexelOffset[1] * Multiply)) + int(1 + Zero)), uint(1), Mask) << SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL;
+	EncodedTexelOffset |= fastClamp(uint2(int2(round(TexelOffset[0] * Multiply)) + int(1 + Zero)), uint(1), Mask) << 0;
+	EncodedTexelOffset |= fastClamp(uint2(int2(round(TexelOffset[1] * Multiply)) + int(1 + Zero)), uint(1), Mask) << SPATIAL_ANTI_ALIASING_OFFSET_BITDEPTH_PER_CHANNEL;
 	return EncodedTexelOffset;
 }
 
@@ -1139,7 +1044,7 @@ uint EncodeHoleFillingVelocity(float2 PixelVelocity)
 	uint iEncodedAngle = uint(round(EncodedAngle)) & (AngleBitDepth - 1);
 
 	float EncodedLength = length(PixelVelocity) * LengthPixelPrecision;
-	uint iEncodedLength = clamp(uint(ceil(EncodedLength)), 0u, LengthBitDepth - 1u);
+	uint iEncodedLength = fastClamp(uint(ceil(EncodedLength)), 0u, LengthBitDepth - 1u);
 
 	uint EncodedHoleFillingVelocity = iEncodedAngle * LengthBitDepth + iEncodedLength;
 	return EncodedHoleFillingVelocity;
@@ -1204,35 +1109,45 @@ tsr_half2 RejectionFactorToBlendFactor(tsr_half2 RejectionFactor)
 	return tsr_half(1.0) - RejectionFactor;
 }
 
-/** Payload of a subpixel depth information in the history */
-struct FTSRSubpixelDepth
+FCatmullRomSamples GetBicubic2DCatmullRomSamples_Stubbe(float2 UV, float2 Size, in float2 InvSize)
 {
-	/** Depth of the pixel. */
-	float DeviceZ;
-	
-	/** Offset of the depth from the center of pixel. */
-	float2 Offset;
-	
-	/** Depth of the pixel in number of frames. */
-	uint Age;
-};
+	float2 PixelCoord = UV * Size;
 
-uint CompressSubpixelDepth(FTSRSubpixelDepth SubpixelDepth)
-{
-	uint CompressedSubpixelDepth = 0u;
-	CompressedSubpixelDepth |= f32tof16(SubpixelDepth.DeviceZ) << 17u;
-	CompressedSubpixelDepth |= uint(clamp(int(round(SubpixelDepth.Offset.x * 16.00 + 16.0)), 0, 31)) << 12u;
-	CompressedSubpixelDepth |= uint(clamp(int(round(SubpixelDepth.Offset.y * 16.00 + 16.0)), 0, 31)) <<  7u;
-	CompressedSubpixelDepth |= (SubpixelDepth.Age) << 0u;
-	return CompressedSubpixelDepth;
+	float2 iuv = floor(PixelCoord - 0.5) + 1.0;
+	tsr_half2 f = tsr_half2(PixelCoord - iuv);
+	tsr_half2 f2 = f * f;
+	tsr_half2 f_2 = f + f;
+
+	tsr_half2 uv = (tsr_half(1.25) - f2) * f + tsr_half(0.5);
+	tsr_half2 t0 = (tsr_half(0.25) * f2 - tsr_half(0.0625)) * (tsr_half(1.125) - tsr_half(0.5) * f2.yx);
+	tsr_half2 w0 = t0 - f_2 * t0;
+	tsr_half2 w3 = t0 + f_2 * t0;
+
+	float2 cuv = (iuv - 0.5) * InvSize;
+	uv *= tsr_half2(InvSize);
+
+	FCatmullRomSamples Samples;
+	Samples.Count = BICUBIC_CATMULL_ROM_SAMPLES;
+
+	Samples.UV[0] = cuv + tsr_half2(               -InvSize.x,                      uv.y);
+	Samples.UV[1] = cuv + tsr_half2(tsr_half(2.0) * InvSize.x,                      uv.y);
+	Samples.UV[2] = cuv + uv;
+	Samples.UV[3] = cuv + tsr_half2(                     uv.x,                -InvSize.y);
+	Samples.UV[4] = cuv + tsr_half2(                     uv.x, tsr_half(2.0) * InvSize.y);
+	
+	Samples.Weight[0] = half(w0.x);
+	Samples.Weight[1] = half(w3.x);
+	Samples.Weight[2] = half(tsr_half(1.0) - w0.x - w3.x - w0.y - w3.y);
+	Samples.Weight[3] = half(w0.y);
+	Samples.Weight[4] = half(w3.y);
+
+	Samples.UVDir[0] = int2(-1,  0);
+	Samples.UVDir[1] = int2( 1,  0);
+	Samples.UVDir[2] = int2( 0,  0);
+	Samples.UVDir[3] = int2( 0, -1);
+	Samples.UVDir[4] = int2( 0,  1);
+	
+	Samples.FinalMultiplier = 1.0;
+	return Samples;
 }
 
-FTSRSubpixelDepth UncompressSubpixelDepth(uint CompressedSubpixelDepth)
-{
-	FTSRSubpixelDepth SubpixelDepth;
-	SubpixelDepth.DeviceZ  = f16tof32(CompressedSubpixelDepth >> 17u);
-	SubpixelDepth.Offset.x = float((CompressedSubpixelDepth >> 12u) & 0x1Fu) * rcp(16.0) - 1.0;
-	SubpixelDepth.Offset.y = float((CompressedSubpixelDepth >>  7u) & 0x1Fu) * rcp(16.0) - 1.0;
-	SubpixelDepth.Age      = CompressedSubpixelDepth & 0x7Fu;
-	return SubpixelDepth;
-}

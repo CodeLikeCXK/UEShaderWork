@@ -261,123 +261,80 @@ half3 DualSpecularGGX(half AverageRoughness, half Lobe0Roughness, half Lobe1Roug
 #endif
 }
 
-float SpecularGGX_ScaleTerm(float Roughness, float3 SpecularColor, BxDFContext Context, float NoL, FAreaLight AreaLight)
-{
-	float a2 = Pow4(Roughness);
-	float Energy = EnergyNormalization(a2, Context.VoH, AreaLight);  
-	// Generalized microfacet specular
-	float D = D_GGX(a2, Context.NoH) * Energy;
-	float Vis = Vis_SmithJointApprox(a2, Context.NoV, NoL);        
-
-	// cel-shading version
-	float FScale = F_Schlick_ScaleTerm(SpecularColor, Context.VoH);
-	return (D * Vis) * FScale;  
-}
-
 FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
-	//replace default lit with toon shading
-// 	BxDFContext Context;
-// 	FDirectLighting Lighting;
-//
-// #if SUPPORTS_ANISOTROPIC_MATERIALS
-// 	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
-// #else
-// 	bool bHasAnisotropy = false;
-// #endif
-//
-// 	float NoV, VoH, NoH;
-// 	BRANCH
-// 	if (bHasAnisotropy)
-// 	{
-// 		half3 X = GBuffer.WorldTangent;
-// 		half3 Y = normalize(cross(N, X));
-// 		Init(Context, N, X, Y, V, L);
-//
-// 		NoV = Context.NoV;
-// 		VoH = Context.VoH;
-// 		NoH = Context.NoH;
-// 	}
-// 	else
-// 	{
-// #if SHADING_PATH_MOBILE
-// 		InitMobile(Context, N, V, L, NoL);
-// #else
-// 		Init(Context, N, V, L);
-// #endif
-//
-// 		NoV = Context.NoV;
-// 		VoH = Context.VoH;
-// 		NoH = Context.NoH;
-//
-// 		SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
-// 	}
-//
-// 	Context.NoV = saturate(abs( Context.NoV ) + 1e-5);
-//
-// #if MATERIAL_ROUGHDIFFUSE
-// 	// Chan diffuse model with roughness == specular roughness. This is not necessarily a good modelisation of reality because when the mean free path is super small, the diffuse can in fact looks rougher. But this is a start.
-// 	// Also we cannot use the morphed context maximising NoH as this is causing visual artefact when interpolating rough/smooth diffuse response. 
-// 	Lighting.Diffuse = Diffuse_Chan(GBuffer.DiffuseColor, Pow4(GBuffer.Roughness), NoV, NoL, VoH, NoH, GetAreaLightDiffuseMicroReflWeight(AreaLight));
-// #else
-// 	Lighting.Diffuse = Diffuse_Lambert(GBuffer.DiffuseColor);
-// #endif
-// 	Lighting.Diffuse *= AreaLight.FalloffColor * (Falloff * NoL);
-//
-// 	BRANCH
-// 	if (bHasAnisotropy)
-// 	{
-// 		//Lighting.Specular = GBuffer.WorldTangent * .5f + .5f;
-// 		Lighting.Specular = AreaLight.FalloffColor * (Falloff * NoL) * SpecularGGX(GBuffer.Roughness, GBuffer.Anisotropy, GBuffer.SpecularColor, Context, NoL, AreaLight);
-// 	}
-// 	else
-// 	{
-// 		if( IsRectLight(AreaLight) )
-// 		{
-// 			Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
-// 		}
-// 		else
-// 		{
-// 			Lighting.Specular = AreaLight.FalloffColor * (Falloff * NoL) * SpecularGGX(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight);
-// 		}
-// 	}
-//
-// 	FBxDFEnergyTerms EnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, Context.NoV, GBuffer.SpecularColor);
-//
-// 	// Add energy presevation (i.e. attenuation of the specular layer onto the diffuse component
-// 	Lighting.Diffuse *= ComputeEnergyPreservation(EnergyTerms);
-//
-// 	// Add specular microfacet multiple scattering term (energy-conservation)
-// 	Lighting.Specular *= ComputeEnergyConservation(EnergyTerms);
-//
-// 	Lighting.Transmission = 0;
-// 	return Lighting;
 	BxDFContext Context;
-	#if SHADING_PATH_MOBILE
-			InitMobile(Context, N, V, L, NoL);
-	#else
-			Init(Context, N, V, L);
-	#endif
-	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
-	Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
+	FDirectLighting Lighting;
 
-	// Remember GBufferD is a R8B8G8A8..so value would be clamped to 0,1, so we pass (1 / Band) from MatGraph...
-	float InvBandsInput = GBuffer.Metallic;		// 2 bands <=> each band has 0.5 width	
-	float Band = ceil(1.0f / (float)InvBandsInput);
-	float InvBands = 1.0f / Band;
-	float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
+#if SUPPORTS_ANISOTROPIC_MATERIALS
+	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
+#else
+	bool bHasAnisotropy = false;
+#endif
 
-	FDirectLighting Lighting;    
-	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
+	float NoV, VoH, NoH;
+	BRANCH
+	if (bHasAnisotropy)
+	{
+		half3 X = GBuffer.WorldTangent;
+		half3 Y = normalize(cross(N, X));
+		Init(Context, N, X, Y, V, L);
 
-	if (IsRectLight(AreaLight))
-		// Our Custom Shading Model is not supported in this scenario
-		Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
+		NoV = Context.NoV;
+		VoH = Context.VoH;
+		NoH = Context.NoH;
+	}
 	else
 	{
-		float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
-		Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands));
+#if SHADING_PATH_MOBILE
+		InitMobile(Context, N, V, L, NoL);
+#else
+		Init(Context, N, V, L);
+#endif
+
+		NoV = Context.NoV;
+		VoH = Context.VoH;
+		NoH = Context.NoH;
+
+		SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
 	}
+
+	Context.NoV = saturate(abs( Context.NoV ) + 1e-5);
+
+#if MATERIAL_ROUGHDIFFUSE
+	// Chan diffuse model with roughness == specular roughness. This is not necessarily a good modelisation of reality because when the mean free path is super small, the diffuse can in fact looks rougher. But this is a start.
+	// Also we cannot use the morphed context maximising NoH as this is causing visual artefact when interpolating rough/smooth diffuse response. 
+	Lighting.Diffuse = Diffuse_Chan(GBuffer.DiffuseColor, Pow4(GBuffer.Roughness), NoV, NoL, VoH, NoH, GetAreaLightDiffuseMicroReflWeight(AreaLight));
+#else
+	Lighting.Diffuse = Diffuse_Lambert(GBuffer.DiffuseColor);
+#endif
+	Lighting.Diffuse *= AreaLight.FalloffColor * (Falloff * NoL);
+
+	BRANCH
+	if (bHasAnisotropy)
+	{
+		//Lighting.Specular = GBuffer.WorldTangent * .5f + .5f;
+		Lighting.Specular = AreaLight.FalloffColor * (Falloff * NoL) * SpecularGGX(GBuffer.Roughness, GBuffer.Anisotropy, GBuffer.SpecularColor, Context, NoL, AreaLight);
+	}
+	else
+	{
+		if( IsRectLight(AreaLight) )
+		{
+			Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
+		}
+		else
+		{
+			Lighting.Specular = AreaLight.FalloffColor * (Falloff * NoL) * SpecularGGX(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight);
+		}
+	}
+
+	FBxDFEnergyTerms EnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, Context.NoV, GBuffer.SpecularColor);
+
+	// Add energy presevation (i.e. attenuation of the specular layer onto the diffuse component
+	Lighting.Diffuse *= ComputeEnergyPreservation(EnergyTerms);
+
+	// Add specular microfacet multiple scattering term (energy-conservation)
+	Lighting.Specular *= ComputeEnergyConservation(EnergyTerms);
 
 	Lighting.Transmission = 0;
 	return Lighting;
@@ -785,75 +742,56 @@ FDirectLighting SubsurfaceProfileBxDF( FGBufferData GBuffer, half3 N, half3 V, h
 
 FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
-	const float3 FuzzColor	= ExtractSubsurfaceColor(GBuffer);
-	const float  Cloth		= saturate(GBuffer.CustomData.a);
-
+	//replace cloth shader with toon renderer from https://zhuanlan.zhihu.com/p/647120967
 	BxDFContext Context;
 #if SHADING_PATH_MOBILE
 	InitMobile(Context, N, V, L, NoL);
 #else
 	Init( Context, N, V, L );
 #endif
-	SphereMaxNoH( Context, AreaLight.SphereSinAlpha, true );
-	Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
+    float3 LightColor = AreaLight.FalloffColor * Falloff;
+    //解GBuffer
+    //	float SpecularRange 	= GBuffer.Metallic;
+    float ShadowRange = GBuffer.Specular;
+    float ShadowOffset  = (GBuffer.Roughness - 0.5) * 2;
+    //	float InnerLine 	= GBuffer.CustomData.a;
+    float3 SSSColor	= ExtractSubsurfaceColor(GBuffer); //解码SSS
+    //明暗颜色
+    float3 BrightColor =GBuffer.BaseColor;
+    float3 ShadowColor = SSSColor;
+    half3 H = normalize(V + L);
+    float NoH = saturate(dot(N, H));
+   //阴影区计算
+   float SmoothStepRangeMin = 0.5 - ShadowRange;
+   float SmoothStepRangeMax = 0.501 + ShadowRange;
+   float IsShadow = smoothstep(SmoothStepRangeMin,SmoothStepRangeMax,saturate(NoL + ShadowOffset));
+   //光照计算
+   FDirectLighting Lighting;
+   Lighting.Diffuse = LightColor * Diffuse_Lambert(lerp(ShadowColor, BrightColor, IsShadow));
+   //Lighting.Specular = LightColor * BrightColor * IsShadow * InnerLineColor * step(0.2f, SpecularRange * pow(NoH, SpecularIntensity));
+   Lighting.Specular = 0;
+   Lighting.Transmission = 0;
+   return Lighting;
+}
 
-//	float3 Spec1;
-//	if(IsRectLight(AreaLight))
-//		Spec1 = RectGGXApproxLTC( GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture );
-//	else
-//		Spec1 = AreaLight.FalloffColor * (Falloff * NoL) * SpecularGGX( GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight );
-
-//	const FBxDFEnergyTerms EnergyTerms1 = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, Context.NoV, GBuffer.SpecularColor);
-//	Spec1 *= ComputeEnergyConservation(EnergyTerms1);
-
-	// Cloth - Asperity Scattering - Inverse Beckmann Layer
-//	float D2 = D_InvGGX( Pow4( GBuffer.Roughness ), Context.NoH );
-//	float Vis2 = Vis_Cloth( Context.NoV, NoL );
-//#if SHADING_PATH_MOBILE
-//	Vis2 = saturate(Vis2);
-//#endif
-//	float3 F2 = F_Schlick( FuzzColor, Context.VoH );
-//	float3 Spec2 = AreaLight.FalloffColor * (Falloff * NoL) * (D2 * Vis2) * F2;
-	
-//	const FBxDFEnergyTermsA EnergyTerms2 = ComputeClothEnergyTermsA(GBuffer.Roughness, Context.NoV);
-//	Spec2 *= ComputeEnergyConservation(EnergyTerms2);
-
-//	FDirectLighting Lighting;
-//	Lighting.Diffuse  = AreaLight.FalloffColor * (Falloff * NoL) * Diffuse_Lambert( GBuffer.DiffuseColor ); 
-//	Lighting.Specular = lerp( Spec1, Spec2, Cloth );
-//	Lighting.Transmission = 0;
-
-//	Lighting.Diffuse *= lerp(ComputeEnergyPreservation(EnergyTerms1), ComputeEnergyPreservation(EnergyTerms2), Cloth);
-
-//	return Lighting;
-//replace clothBxDF with toon shader
-//experimental
-//from: https://zhuanlan.zhihu.com/p/647120967
-float3 LightColor = AreaLight.FalloffColor * Falloff;
-	//解GBuffer
-//	float SpecularRange 	= GBuffer.Metallic;
-   float ShadowRange = GBuffer.Specular;
-   float ShadowOffset  = (GBuffer.Roughness - 0.5) * 2;
-//	float InnerLine 	= GBuffer.CustomData.a;
-	float3 SSSColor	 	= ExtractSubsurfaceColor(GBuffer); //解码SSS
-	//明暗颜色
-	float3 BrightColor =GBuffer.BaseColor;
-	float3 ShadowColor = SSSColor;
-
-
-	half3 H = normalize(V + L);
-	float NoH = saturate(dot(N, H));
-	//阴影区计算
- 
-    float SmoothStepRangeMin = 0.5 - ShadowRange;
-    float SmoothStepRangeMax = 0.501 + ShadowRange;
-	float IsShadow = smoothstep(SmoothStepRangeMin,SmoothStepRangeMax,saturate(NoL + ShadowOffset));
-	//光照计算
-	FDirectLighting Lighting;
-	Lighting.Diffuse = LightColor * Diffuse_Lambert(lerp(ShadowColor, BrightColor, IsShadow));
-	//Lighting.Specular = LightColor * BrightColor * IsShadow * InnerLineColor * step(0.2f, SpecularRange * pow(NoH, SpecularIntensity));
-    Lighting.Specular = 0;
-	Lighting.Transmission = 0;
+//implement simple toon model, using method in https://zhuanlan.zhihu.com/p/527672027
+FDirectLighting YivanToonBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
+{
+	BxDFContext Context;
+	#if SHADING_PATH_MOBILE
+		InitMobile(Context, N, V, L, NoL);
+	#else
+		Init( Context, N, V, L );
+	#endif
+	FDirectLighting Lighting = 
+	{
+		float3(0.0,0.0,0.0),
+		float3(0.0,0.0,0.0),
+		float3(0.0,0.0,0.0)
+	}
+	//use metallic to control step
+	float FalloffMask=Falloff*step(GBuffer.Metallic,NoL);
+	Lighting.Diffuse=AreaLight.FalloffColor * FalloffMask * GBuffer.DiffuseColor * (1/3.1415926);
 	return Lighting;
 }
 
@@ -1054,6 +992,8 @@ FDirectLighting IntegrateBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, 
 			return ClothBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
 		case SHADINGMODELID_EYE:
 			return EyeBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
+		case SHADINGMODELID_TESTTOON:
+			return YivanToonBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
 		default:
 			return (FDirectLighting)0;
 	}

@@ -17,7 +17,7 @@ struct FLightMapDensityVSToPS
 #if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
 	float3 PixelPositionExcludingWPO : TEXCOORD7;
 #endif
-	float4 Position			: SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 };
 
 #define FLightMapDensityVSOutput FLightMapDensityVSToPS
@@ -47,7 +47,8 @@ void MainVertexShader(
 	Output.WorldPosition = WorldPosition;
 	{
 		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, Output.WorldPosition);
-		Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+		float4 ClipSpacePosition = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+		Output.Position = INVARIANT(ClipSpacePosition);
 	}
 
 #if USE_GLOBAL_CLIP_PLANE

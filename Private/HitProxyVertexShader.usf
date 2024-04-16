@@ -39,7 +39,7 @@ struct FHitProxyVSToPS
 #if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS
 	float3 PixelPositionExcludingWPO : TEXCOORD7;
 #endif
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 };
 
 #define FHitProxyVSOutput FHitProxyVSToPS
@@ -52,14 +52,21 @@ void Main(
 #if USE_GLOBAL_CLIP_PLANE
 	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
 #endif
+#if INSTANCED_STEREO
+	, out uint ViewportIndex : SV_ViewPortArrayIndex
+#endif
 	)
 {
-	ResolvedView = ResolveView();
+#if INSTANCED_STEREO
+	uint EyeIndex = GetEyeIndexFromVF(Input);
+	ViewportIndex = EyeIndex;
+#endif
+	ResolvedView = ResolveViewFromVF(Input);
 
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
 	float4 WorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates);
 	float4 WorldPositionExcludingWPO = WorldPosition;
-	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
 
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
 	WorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
@@ -76,7 +83,7 @@ void Main(
 
 	{
 		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
-		Output.Position = INVARIANT(mul(RasterizedWorldPosition, View.TranslatedWorldToClip));
+		Output.Position = INVARIANT(mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip));
 	}
 
 #if USE_GLOBAL_CLIP_PLANE

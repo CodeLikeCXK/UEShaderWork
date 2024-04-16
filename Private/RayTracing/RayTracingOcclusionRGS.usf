@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 // Bump to force a rebuild of this shader (when changing related C++ code). Generate unique value on merge conflict.
-#define RAY_TRACING_OCCLUSION_RGS_VERSION 0x8219847B
+#pragma message("UESHADERMETADATA_VERSION 42D4CD2F-D217-4305-81AB-F113F7114047")
 
-// Strata use view's resources to read & trace shadow ray
-#define STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE 1
+// Substrate use view's resources to read & trace shadow ray
+#define SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE 1
 
 #include "../Common.ush"
 #include "../MonteCarlo.ush"
@@ -14,19 +14,17 @@
 #include "../ScreenSpaceDenoise/SSDPublic.ush"
 #include "../TransmissionCommon.ush"
 #include "../HairStrands/HairStrandsVisibilityCommon.ush"
-#include "../Strata/Strata.ush"
+#include "../Substrate/Substrate.ush"
+#include "../Substrate/SubstrateSubsurface.ush"
 #include "RayTracingCommon.ush"
 #include "RayTracingDeferredShadingCommon.ush"
 #include "RayTracingDirectionalLight.ush"
 #include "RayTracingRectLight.ush"
 #include "RayTracingSphereLight.ush"
 #include "RayTracingCapsuleLight.ush"
+#include "/Engine/Shared/LightDefinitions.h"
 
-/** Light types */
-#define LIGHT_TYPE_DIRECTIONAL 0
-#define LIGHT_TYPE_POINT 1
-#define LIGHT_TYPE_SPOT 2
-#define LIGHT_TYPE_RECT 3
+#define USE_TRANSLUCENT_SHADOW  (!COMPUTESHADER && PLATFORM_SUPPORTS_RAY_TRACING_HIGH_END_EFFECTS) // support translucent shadow path in high end ray tracing without inline ray tracing
 
 #define ShadowMaskType_Opaque 0
 #define ShadowMaskType_Hair 1
@@ -47,12 +45,18 @@ float LODTransitionEnd;
 float AvoidSelfIntersectionTraceDistance;
 uint bTransmissionSamplingDistanceCulling;
 uint TransmissionSamplingTechnique;
+uint TransmissionMeanFreePathType;
 uint RejectionSamplingTrials;
 uint bAcceptFirstHit;
 uint bTwoSidedGeometry;
+uint TranslucentShadow;
+uint MaxTranslucencyHitCount;
 
 #define TransmissionSampling_ConstantTrackingInfiniteDomain 0
 #define TransmissionSampling_ConstantTrackingFiniteDomain 1
+
+#define TransmissionMeanFreePathType_ExtinctionScale	0
+#define TransmissionMeanFreePathType_MaxMeanFreePath	1
 
 #if USE_HAIR_LIGHTING
 #include "../HairStrands/HairStrandsRaytracing.ush"
@@ -109,6 +113,10 @@ bool GenerateOcclusionRay(
 			if (!(dot(LightDirection, LightParameters.Direction) >= CosAngle))
 			{
 				// outside the cone of the light, skip all work
+				RayOrigin = (float3)0;
+				RayDirection = (float3)0;
+				RayTMin = 0.0f;
+				RayTMax = 0.0f;
 				return false;
 			}
 		#endif
@@ -156,12 +164,12 @@ bool GenerateOcclusionRay(
 
 float ComputeDiffuseTransmission(
 	float3 V, float3 P, float3 N,
-	float MeanFreePath, float Eta,
+	float MeanFreePath, float MaxTransmissionDistance, float Eta,
 	FLightShaderParameters LightParameters, float2 LightSample,
 	inout RandomSequence RandSequence, 
 	uint RejectionRetryMax, uint2 PixelCoord)
 {
-	float TransmissionDistance = SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE;
+	float TransmissionDistance = MaxTransmissionDistance;
 	float RcpMeanFreePath = rcp(MeanFreePath);
 
 	// Refract inward and force a scattering event
@@ -190,10 +198,15 @@ float ComputeDiffuseTransmission(
 			InstanceInclusionMask,
 			RejectionTestRay);
 		TMax = (RejectionTestPayload.IsHit() ? RejectionTestPayload.HitT : RejectionTestRay.TMax);
-		if (RejectionTestPayload.IsMiss())
+		
+		// Assume the back facing is parallel to the front face.
+		// If the first ray marching into the volume does not hit anything, we should still
+		// resume for the scattering such that it has a chance to fly out of the volume
+		// based on the incident angle and the angle to light 
+		/*if (RejectionTestPayload.IsMiss())
 		{
 			return TransmissionDistance;
-		}
+		}*/
 	}
 
 	float RandSample = RandomSequence_GenerateSample1D(RandSequence);
@@ -205,7 +218,7 @@ float ComputeDiffuseTransmission(
 		// Use constant tracking through homogeneous media, but renormalize to force a scatter event within the interval: [0, TMax]
 		float NormalizationConstant = 1.0 - exp(-RcpMeanFreePath * TMax);
 		ScatterDistance = -log(1.0 - RandSample * NormalizationConstant) * MeanFreePath;
-		ScatterDistancePdf = RcpMeanFreePath * exp(-RcpMeanFreePath * ScatterDistance) * rcp(NormalizationConstant);
+		ScatterDistancePdf = (TMax * RcpMeanFreePath) * exp(-RcpMeanFreePath * ScatterDistance) * rcp(NormalizationConstant);
 	}
 	else // TransmissionSamplingTechnique = TransmissionSampling_ConstantTrackingInfiniteDomain
 	{
@@ -224,7 +237,13 @@ float ComputeDiffuseTransmission(
 		}
 		if (ScatterDistance > TMax)	return 0.0;
 	}
+
+	// After sampling by pdf, the first interaction could go out of the range
+	// resulting in no transmission. Need to reconsider adding it in by commenting this out?
 	ScatterDistance /= ScatterDistancePdf;
+
+	// Avoid self intersection.
+	ScatterDistance = max(0.01, ScatterDistance);
 
 	// Build sub-surface scattering ray
 	FRayDesc SSSRay;
@@ -238,7 +257,7 @@ float ComputeDiffuseTransmission(
 
 	// Clip the ray length by the maximum transmission distance
 	float LightTMax = SSSRay.TMax;
-	SSSRay.TMax = SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE - ScatterDistance;
+	SSSRay.TMax = TransmissionDistance - ScatterDistance;
 
 	FMinimalPayload SSSPayload = TraceVisibilityRay(
 		TLAS,
@@ -326,6 +345,7 @@ FOcclusionResult ComputeOcclusion(
 	const FOcclusionShadingParameters ShadingDesc,
 	const FLightShaderParameters LightParameters,
 	const FTransmissionProfileParams TransmissionProfileParams,
+	const float SubsurfaceSamplingMeanFreePath,
 	const uint LocalSamplesPerPixel)
 {
 	FOcclusionResult Out = InitOcclusionResult();
@@ -448,6 +468,7 @@ FOcclusionResult ComputeOcclusion(
 		uint RayFlagsForOpaque = bAcceptFirstHit != 0 ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0;
 
 		FMinimalPayload MinimalPayload;
+		const bool NeedToTraceTranslucentShadow = TranslucentShadow == 1 && MaxTranslucencyHitCount != 0;
 
 #if AVOID_SELF_INTERSECTION_TRACE
 		{
@@ -540,9 +561,67 @@ FOcclusionResult ComputeOcclusion(
 		}
 		else
 		{
-			Out.ClosestRayDistance = (Out.ClosestRayDistance == DENOISER_INVALID_HIT_DISTANCE) ? DENOISER_MISS_HIT_DISTANCE : Out.ClosestRayDistance;
-			Out.TransmissionDistance += 1.0;
-			Out.Visibility += 1.0;
+#if USE_TRANSLUCENT_SHADOW
+			bool bHasClosestEffectiveTranslucentHit = false;
+
+			if (NeedToTraceTranslucentShadow)
+			{
+				// When there is no intersection, test for translucent material hit if translucent shadow
+				// is supported. If there is a hit, record the accumulated opacity.
+				FTranslucentMinimalPayload TranslucentMinimalPayload = (FTranslucentMinimalPayload)0;
+				float Visibility = 1.0f;
+				float HitT = 0;
+				int TranslucentRayTriangleHitCount = 0;
+				FRayDesc TranslucentRay = Ray;
+				
+				while (MaxTranslucencyHitCount != 0 &&
+					TranslucentRay.TMin < TranslucentRay.TMax &&
+					TranslucentRayTriangleHitCount != MaxTranslucencyHitCount &&
+					Visibility > 0.0f)
+				{
+					TranslucentMinimalPayload = TraceTranslucentVisibilityRay(
+						TLAS,
+						RayFlags, // Accept first hit will cause artifact.
+						RaytracingMask,
+						TranslucentRay);
+
+					if (!TranslucentMinimalPayload.IsHit())
+					{
+						break;
+					}
+
+					TranslucentRay.TMin = asfloat(asuint(TranslucentMinimalPayload.HitT) + 1);
+					TranslucentRayTriangleHitCount++;
+
+					// Record first hit with opacity > 0
+					if (!bHasClosestEffectiveTranslucentHit && 
+						TranslucentMinimalPayload.Opacity > 0)
+					{
+						HitT = TranslucentMinimalPayload.HitT;
+						bHasClosestEffectiveTranslucentHit = true;
+					}
+
+					Visibility *= 1 - TranslucentMinimalPayload.Opacity;
+				}
+
+				if (bHasClosestEffectiveTranslucentHit)
+				{
+					Out.ClosestRayDistance =
+						(Out.ClosestRayDistance == DENOISER_INVALID_HIT_DISTANCE) ||
+						(HitT < Out.ClosestRayDistance) ? HitT : Out.ClosestRayDistance;
+					Out.SumRayDistance += HitT;
+					Out.HitCount += 1.0f;
+					Out.Visibility += Visibility;
+				}
+			}
+			
+			if (!bHasClosestEffectiveTranslucentHit)
+#endif
+			{
+				Out.ClosestRayDistance = (Out.ClosestRayDistance == DENOISER_INVALID_HIT_DISTANCE) ? DENOISER_MISS_HIT_DISTANCE : Out.ClosestRayDistance;
+				Out.TransmissionDistance += 1.0;
+				Out.Visibility += 1.0;
+			}
 		}
 	}
 #if !ENABLE_MULTIPLE_SAMPLES_PER_PIXEL
@@ -556,26 +635,36 @@ FOcclusionResult ComputeOcclusion(
 
 		// Fix light sampling to occur at the light center for all transmission computations..
 		float2 LightSample = 0.5;
-		const float3 TranslatedWorldViewOrigin = LWCToFloat(LWCAdd(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation));
+		const float3 TranslatedWorldViewOrigin = DFFastToTranslatedWorld(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation);
 		const float3 V = normalize(TranslatedWorldPosition - TranslatedWorldViewOrigin);
 
-		const float MeanFreePath = TransmissionProfileParams.ExtinctionScale;
+		// Apply sqrt to match the behavior of the rasterizer closer visually when ExtinctionScale <=1.
+		const float ExtinctionScale = lerp(sqrt(TransmissionProfileParams.ExtinctionScale), 
+											TransmissionProfileParams.ExtinctionScale, TransmissionProfileParams.ExtinctionScale > 1);
+		
+		// Decrease ExtinctionScale should increase the max transmission distance. Keep rasterizer and raytracing shadow behave similar for transmission.
+		const float MaxTransmissionDistance = SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE / ExtinctionScale; 
 		const float Eta = TransmissionProfileParams.OneOverIOR;
 		const uint RejectionRetryMax = LocalSamplesPerPixel - 1;
-		Out.TransmissionDistance = ComputeDiffuseTransmission(V, TranslatedWorldPosition, WorldNormal, MeanFreePath, Eta, LightParameters, LightSample, RandSequence, RejectionRetryMax, PixelCoord);
+		Out.TransmissionDistance = ComputeDiffuseTransmission(V, TranslatedWorldPosition, WorldNormal, SubsurfaceSamplingMeanFreePath,
+			MaxTransmissionDistance, Eta, LightParameters, LightSample, RandSequence, RejectionRetryMax, PixelCoord);
 
 		// Overload closest-hit distance to express occlusion distance when facing the light or transmission distance when back-facing
-		if (Out.TransmissionDistance < SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE)
+		if (Out.TransmissionDistance < MaxTransmissionDistance)
 		{
 			Out.ClosestRayDistance = max(Out.ClosestRayDistance, Out.TransmissionDistance);
 		}
 
-		// Conversion to raster model: 1.0 - (distance / SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE)
-		Out.TransmissionDistance = saturate(EncodeThickness(Out.TransmissionDistance / (SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE)));
+		// Respond to the normal scale
+		const float NormalScale = TransmissionProfileParams.NormalScale * 0.5;
+		Out.TransmissionDistance += NormalScale;
+
+		// Conversion to raster model: 1.0 - (distance / SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE).
+		Out.TransmissionDistance = saturate(EncodeThickness(Out.TransmissionDistance / MaxTransmissionDistance));
 	}
 	else if (ShadingDesc.bIsSubsurface || ShadingDesc.bIsHair)
 	{
-		float Depth = length(TranslatedWorldPosition - View.TranslatedWorldCameraOrigin);
+		float Depth = GetDistanceToCameraFromViewVector(TranslatedWorldPosition - View.TranslatedWorldCameraOrigin);
 		float Range = LODTransitionEnd - LODTransitionStart;
 		if (Depth > LODTransitionStart && Range > 0.0)
 		{
@@ -591,9 +680,26 @@ FOcclusionResult ComputeOcclusion(
 	return Out;
 }
 
-RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
+#if !SUBSTRATE_ENABLED
+float DecodeSamplingSSSProfileRadius(FGBufferData GBufferData)
 {
-	const uint2 PixelCoord = DispatchRaysIndex().xy + View.ViewRectMin.xy + PixelOffset;
+	uint SubsurfaceProfileInt = ExtractSubsurfaceProfileInt(GBufferData);
+
+	// Burley Sampling parameterization
+	float3 SurfaceAlbedo = View.SSProfilesTexture.Load(int3(BSSS_SURFACEALBEDO_OFFSET, SubsurfaceProfileInt, 0)).www;
+	float3 DiffuseMeanFreePath = DecodeDiffuseMeanFreePath(View.SSProfilesTexture.Load(int3(BSSS_DMFP_OFFSET, SubsurfaceProfileInt, 0))).www;
+	float WorldUnitScale = DecodeWorldUnitScale(View.SSProfilesTexture.Load(int3(SSSS_TINT_SCALE_OFFSET, SubsurfaceProfileInt, 0)).a) * BURLEY_CM_2_MM;
+	float Opacity = UseSubsurfaceProfile(GBufferData.ShadingModelID) ? GBufferData.CustomData.a : 0.0f;
+
+	float SSSRadius = GetMFPFromDMFPApprox(SurfaceAlbedo, SurfaceAlbedo, Opacity * WorldUnitScale * DiffuseMeanFreePath).z;
+
+	return SSSRadius * BURLEY_MM_2_CM;
+}
+#endif
+
+RAY_TRACING_ENTRY_RAYGEN_OR_INLINE(Occlusion)
+{
+	uint2 PixelCoord = DispatchThreadIndex.xy + View.ViewRectMin.xy + PixelOffset;
 
 	FOcclusionResult Occlusion = InitOcclusionResult();
 	FOcclusionResult HairOcclusion = InitOcclusionResult();
@@ -613,32 +719,61 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 		float3 WorldNormal = 0;
 		FOcclusionShadingParameters ShadingParameters = (FOcclusionShadingParameters)0;
 		FTransmissionProfileParams TransmissionParameters = (FTransmissionProfileParams)0;
-		#if STRATA_ENABLED
+		float SubsurfaceSamplingMeanFreePath = 0;
+		#if SUBSTRATE_ENABLED
 		{
-			FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelCoord, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-			const FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-			const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
+			FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelCoord, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+			const FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+			const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelCoord, 0)));
 
-			const FStrataSubsurfaceHeader SSSHeader = StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelCoord);
-			const bool bSSSIsValid = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
-			const bool bSSSIsProfile = StrataSubSurfaceHeaderGetIsProfile(SSSHeader);
+			const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelCoord);
+			
+			const uint SSSType = SSSHEADER_TYPE(SSSHeader);
+			const bool bHasSSS = SubstratePixelHeader.HasSubsurface();
+			const uint BSDFType = SubstratePixelHeader.SubstrateGetBSDFType();
 
-			ShadingParameters.bIsValid = IsStrataMaterial(StrataPixelHeader);
-			ShadingParameters.bIsHair = StrataGetBSDFType(StrataPixelHeader) == STRATA_BSDF_TYPE_HAIR;
-			ShadingParameters.bIsSubsurface = bSSSIsValid && !bSSSIsProfile;
-			ShadingParameters.bHasSubsurfaceProfile = bSSSIsValid && bSSSIsProfile;
-			ShadingParameters.bBackfaceCulling = any(StrataSubSurfaceHeaderGetMFP(SSSHeader) > 0); // STRATA_TODO
+			ShadingParameters.bIsValid = SubstratePixelHeader.IsSubstrateMaterial();
+			ShadingParameters.bIsHair = BSDFType == SUBSTRATE_BSDF_TYPE_HAIR;
+			ShadingParameters.bIsSubsurface = bHasSSS ? SSSType == SSS_TYPE_WRAP : false;
+			ShadingParameters.bHasSubsurfaceProfile = bHasSSS ? (SSSType == SSS_TYPE_DIFFUSION_PROFILE || SSSType == SSS_TYPE_DIFFUSION) : false;
+			ShadingParameters.bBackfaceCulling = !(BSDFType == SUBSTRATE_BSDF_TYPE_EYE || (bHasSSS && SSSType == SSS_TYPE_WRAP)); // isthin?
 
 			WorldNormal = TopLayerData.WorldNormal;
 
-			if (ENABLE_TRANSMISSION && ShadingParameters.bHasSubsurfaceProfile)
+
+			if (ENABLE_TRANSMISSION)
 			{
-				TransmissionParameters = GetTransmissionProfileParams(StrataSubSurfaceHeaderGetProfileId(SSSHeader));
+				if (SSSType == SSS_TYPE_DIFFUSION_PROFILE)
+				{
+					TransmissionParameters = GetTransmissionProfileParams(SubstrateSubSurfaceHeaderGetProfileId(SSSHeader));
+				}
+				else if (SSSType == SSS_TYPE_DIFFUSION)
+				{
+					FSubsurfaceOpacityMFP SubsurfaceOpacityMFP = SubstrateGetSubsurfaceOpacityMFP(SSSHeader);
+
+					// We know that or SSS_TYPE_DIFFUSION we have access to the mean free path. 
+					const float MFP = SubsurfaceOpacityMFP.Data;
+					const float Extinction = SubstrateShadowMFPToExtinction(MFP);
+
+					TransmissionParameters = InitTransmissionProfileParams();
+					TransmissionParameters.ExtinctionScale = Extinction;
+					
+					SubsurfaceSamplingMeanFreePath = 1.0;
+					BRANCH
+					if (TransmissionMeanFreePathType == TransmissionMeanFreePathType_MaxMeanFreePath)
+					{
+						SubsurfaceSamplingMeanFreePath = MFP;
+					}
+				}
 			}
 
-			if (ShadingParameters.bIsSubsurface)
+			if (ShadingParameters.bIsSubsurface) // Legacy Subsurface shading model == Substrate Wrap SSS.
 			{
-				TransmissionParameters.ExtinctionScale = StrataGetOpacityFromSubSurface(SSSHeader);
+				FSubsurfaceOpacityMFP SubsurfaceOpacityMFP = SubstrateGetSubsurfaceOpacityMFP(SSSHeader);
+				if (SubsurfaceOpacityMFP.bDataIsOpacity)
+				{
+					TransmissionParameters.ExtinctionScale = SubsurfaceOpacityMFP.Data;
+				}
 			}
 		}	
 		#else
@@ -648,16 +783,26 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 			ShadingParameters.bIsHair = GBufferData.ShadingModelID == SHADINGMODELID_HAIR;
 			ShadingParameters.bIsSubsurface = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE;
 			ShadingParameters.bHasSubsurfaceProfile = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE;
+			// eye, two sided foliage and subsurface do not need backface culling.
 			ShadingParameters.bBackfaceCulling =
-				GBufferData.ShadingModelID == SHADINGMODELID_EYE ||
-				GBufferData.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE ||
-				GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE;
+				!(GBufferData.ShadingModelID == SHADINGMODELID_EYE ||
+				GBufferData.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE || 
+				GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE);
 
 			WorldNormal	= GBufferData.WorldNormal;
 
 			if (ENABLE_TRANSMISSION)
 			{
 				TransmissionParameters = GetTransmissionProfileParams(ExtractSubsurfaceProfileInt(GBufferData));
+				
+				// If MFP is available, use the actual mean free path, otherwise, fallback to the old behavior using extinction scale in the subsurface profile.
+				SubsurfaceSamplingMeanFreePath = TransmissionParameters.ExtinctionScale;
+
+				BRANCH
+				if (TransmissionMeanFreePathType == TransmissionMeanFreePathType_MaxMeanFreePath)
+				{
+					SubsurfaceSamplingMeanFreePath = DecodeSamplingSSSProfileRadius(GBufferData);
+				}
 			}
 
 			if (ShadingParameters.bIsSubsurface)
@@ -686,6 +831,7 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 			ShadingParameters,
 			LightParameters, 
 			TransmissionParameters,
+			SubsurfaceSamplingMeanFreePath,
 			LocalSamplesPerPixel);
 
 		#if USE_HAIR_LIGHTING
@@ -705,6 +851,7 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 				HairOcclusionShadingParameters,
 				LightParameters,
 				HairTransmissionParameters,
+				0.f/*SubsurfaceSamplingMeanFreePath*/,
 				RequestedSamplePerPixel);
 		}
 		#endif

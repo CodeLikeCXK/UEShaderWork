@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "../Common.ush"
 #include "../MonteCarlo.ush"
 #include "../MortonCode.ush"
@@ -51,9 +52,7 @@ StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
 Buffer<uint2> ShadowTraceTileData;
 Buffer<int> VirtualShadowMapIds;
 
-uint MaxTranslucentSkipCount;
 uint MaxTraversalIterations;
-uint GroupCount;
 uint ViewIndex;
 
 uint LumenLightType;
@@ -84,26 +83,17 @@ StructuredBuffer<uint> ShadowTraces;
 LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 {
 	uint ShadowTraceIndexOffset = DispatchThreadIndex.x % 64;
-
-#if DIM_INDIRECT_DISPATCH
 	uint ShadowTraceGroup = DispatchThreadIndex.y;
-#else
-	for (uint ShadowTraceGroup = DispatchThreadIndex.y; ShadowTraceGroup * 64 < ShadowTraceAllocator[0]; ShadowTraceGroup += GroupCount)
-#endif
+	uint ShadowTraceIndex = ShadowTraceGroup * 64 + ShadowTraceIndexOffset;
+	FShadowTrace ShadowTrace = UnpackShadowTrace(ShadowTraces[ShadowTraceIndex]);
+	uint2 CoordInCardTile = ShadowTrace.LightTileCoord;	
+	const FLightTileForShadowMaskPass LightTile = UnpackLightTileForShadowMaskPass(LightTiles[ShadowTrace.LightTileIndex]);
+
+	if (LightTile.ViewIndex == ViewIndex)
 	{
-		uint ShadowTraceIndex = ShadowTraceGroup * 64 + ShadowTraceIndexOffset;
-		FShadowTrace ShadowTrace = UnpackShadowTrace(ShadowTraces[ShadowTraceIndex]);
-		uint2 CoordInCardTile = ShadowTrace.LightTileCoord;	
-		const FLightTileForShadowMaskPass LightTile = UnpackLightTileForShadowMaskPass(LightTiles[ShadowTrace.LightTileIndex]);
-
-		if (LightTile.ViewIndex != ViewIndex)
-		{
-			return;
-		}
-
 		uint2 TexelInCardPageCoord = LightTile.TileCoord * CARD_TILE_SIZE + CoordInCardTile;
 
-		const FLumenLight LumenLight = LoadLumenLight(LightTile.LightIndex, LWCHackToFloat(PrimaryView.PreViewTranslation));
+		const FLumenLight LumenLight = LoadLumenLight(LightTile.LightIndex, DFHackToFloat(PrimaryView.PreViewTranslation), PrimaryView.PreExposure);
 
 		if (all(CoordInCardTile < CARD_TILE_SIZE))
 		{
@@ -122,7 +112,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 
 				float3 WorldPosition = SurfaceCacheData.WorldPosition;
 				float3 WorldNormal = SurfaceCacheData.WorldNormal;
-				float3 TranslatedWorldPosition = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+				float3 TranslatedWorldPosition = WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
 
 				float3 L = LumenLight.DeferredLightData.Direction;
 				float3 ToLight = L;
@@ -164,12 +154,10 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 					FRayCone RayCone = (FRayCone)0;
 					uint CullingMode = RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
 					FRayTracedLightingContext Context = CreateRayTracedLightingContext(
-						TLAS,
 						RayCone,
 						CoordInCardTile,
 						CoordInCardTile.x, // dummy coordinate
 						CullingMode,
-						MaxTranslucentSkipCount,
 						MaxTraversalIterations);
 
 					// Shadows don't need closest hit distance
@@ -185,11 +173,10 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 #if ENABLE_FAR_FIELD_TRACING
 					{
 						Context.bSkipClosestHitShader = true;
-						Context.TranslucentSkipCountMax = 0;
 						Context.FarFieldReferencePos = FarFieldReferencePos;
 						Context.FarFieldMaxTraceDistance = FarFieldTMax;
 						
-						FRayTracedLightingResult RayResult = TraceSurfaceCacheFarFieldRay(Ray, Context);
+						FRayTracedLightingResult RayResult = TraceSurfaceCacheFarFieldRay(TLAS, Ray, Context);
 						bRayOccluded = IsRayOccluded(RayResult);
 
 						Context.bSkipClosestHitShader = false;
@@ -210,7 +197,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 						ProjectedRay.TMax = 2.0f * SearchRadius;
 						Context.CullingMode = RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
 
-						FLumenMinimalRayResult SearchResult = TraceLumenMinimalRay(ProjectedRay, Context);
+						FLumenMinimalRayResult SearchResult = TraceLumenMinimalRay(TLAS, ProjectedRay, Context);
 
 						if (IsRayOccluded(SearchResult))
 						{
@@ -222,11 +209,11 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 
 					if (!bRayOccluded)
 					{						
-						Context.InstanceMask = RAY_TRACING_MASK_OPAQUE;
-						Context.TranslucentSkipCountMax = MaxTranslucentSkipCount;
+						Context.InstanceMask = RAY_TRACING_MASK_OPAQUE_SHADOW;
+						Context.bIsShadowRay = true;
 						Context.bSkipClosestHitShader = false;
 
-						FRayTracedLightingResult RayResult = TraceSurfaceCacheRay(Ray, Context);
+						FRayTracedLightingResult RayResult = TraceSurfaceCacheRay(TLAS, Ray, Context);
 						bRayOccluded = IsRayOccluded(RayResult);
 					}
 

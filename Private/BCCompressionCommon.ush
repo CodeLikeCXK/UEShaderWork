@@ -281,9 +281,8 @@ uint2 CompressBC4Block( in float Block[16] )
 
 	uint2 BC4Block = 0;
 	BC4Block.x = (MinAlphaUint << 8) | MaxAlphaUint;
-	BC4Block.x |= Indices.x >> 16;
-	BC4Block.y = Indices.y & 0xffff;
-	BC4Block.y |= Indices.y >> 16;
+	BC4Block.x |= Indices.x;
+	BC4Block.y = Indices.y;
 	return BC4Block;
 }
 
@@ -485,27 +484,6 @@ uint4 CompressBC3BlockYCoCg(in float3 Block[16])
 	uint2 Indices = GetPackedLumaBlockIndices(Block, MinColor.x, MaxColor.x);
 
 	return uint4((MinLumaUint << 8) | MaxLumaUint | Indices.x, Indices.y, (MinColor565 << 16) | MaxColor565, CoCgIndices);
-}
-
-void Swap(inout uint3 A, inout uint3 B)
-{
-	uint3 Temp = A;
-	A = B;
-	B = Temp;
-}
-
-void Swap(inout float3 A, inout float3 B)
-{
-	float3 Temp = A;
-	A = B;
-	B = Temp;
-}
-
-void Swap(inout float A, inout float B)
-{
-	float Temp = A;
-	A = B;
-	B = Temp;
 }
 
 float3 Quantize10(float3 X)

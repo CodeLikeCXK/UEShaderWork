@@ -38,8 +38,13 @@ PathTracingSpatialTemporalDenoising.usf: Spatial temporal denoising for path tra
 #define TEMPORAL_FEATURE_FUSION			0
 #endif
 
+// Variance Type
+#define RADIANCE_MULTI_CHANNEL					0
+#define RADIANCE_ALBEDO_NORMAL_SINGLECHANNEL	1
+
 #ifndef TEMPORAL_PREPASS
 #define TEMPORAL_PREPASS				0
+#define VARIANCE_TYPE					RADIANCE_MULTI_CHANNEL
 #endif
 
 #define PREPASS_PHASE_INIT				0
@@ -47,6 +52,10 @@ PathTracingSpatialTemporalDenoising.usf: Spatial temporal denoising for path tra
 
 #ifndef SPATIAL_DENOISING
 #define SPATIAL_DENOISING				0
+#endif
+
+#ifndef PREPASS_GENERATE_TEXTURE
+#define PREPASS_GENERATE_TEXTURE		0
 #endif
 
 #ifndef VISUALIZE_MOTIONVECTOR
@@ -638,8 +647,8 @@ static float NormalizeDeltaEAndEuclideanDistanceToSameMean = 0.0141f;
 float GetDeltaE(float3 LinearRGB0, float3 LinearRGB1, bool bNormalizeToEuclideanMean = true)
 {
 
-	float3 Lab0 = LinearRGB_2_LAB(LinearRGB0, XYZ_WHITE_REF_D65_NOMINAL);
-	float3 Lab1 = LinearRGB_2_LAB(LinearRGB1, XYZ_WHITE_REF_D65_NOMINAL);
+	float3 Lab0 = LinearRGB_2_LAB(LinearRGB0);
+	float3 Lab1 = LinearRGB_2_LAB(LinearRGB1);
 
 	float DeltaE = DeltaE_CIE2000(Lab0, Lab1);
 
@@ -726,7 +735,7 @@ uint MipLevel;
 
 FPixelOffset GetPixelOffsetFromLowerMip(float2 Position, uint MipDiff)
 {
-	uint MipPosMultipler = 1 << (MipDiff);
+	uint MipPosMultipler = 1u << (MipDiff);
 	uint LowerMipLevel = MipLevel + MipDiff;
 
 	float2 LowerMipPosition = 0.0f;
@@ -778,8 +787,38 @@ float3 GetTextureValueWithOffset(Texture2D Tex, float2 Position)
 #if TEMPORAL_PREPASS
 
 Texture2D<float4> InputTexture;
+Texture2D<float4> AlbedoTexture;
+Texture2D<float4> NormalTexture;
 RWStructuredBuffer<FPixelMaterialLightingFingerprint> RWVarianceMap;
 int Iteration;
+
+// Note that the radiance, albedo and normal are the mean value.
+float4 GetMeanFromTextures(int2 Position)
+{
+	float4 Value = 0;
+#if VARIANCE_TYPE == RADIANCE_MULTI_CHANNEL
+	Value  = InputTexture[Position];
+#elif VARIANCE_TYPE == RADIANCE_ALBEDO_NORMAL_SINGLECHANNEL
+	Value.x = Luminance(InputTexture[Position].rgb);
+	Value.y = Luminance(AlbedoTexture[Position].rgb);
+	
+	//The length of the average normal indicates the variance
+	//1: All pointing to the same direction
+	//0: Uniform in all directions
+	Value.z = length2(NormalTexture[Position].rgb);
+	
+	// Special case handling:
+	// 1. Regions without normal has a zero length, like sky
+	// 2. The first frame
+	if (Value.z == 0.0f || Iteration == 0)
+	{
+		Value.z = 1.0f;
+	}
+#else
+	#error "Not implemented" 
+#endif
+	return Value;
+}
 
 [numthreads(THREAD_SIZE_X, THREAD_SIZE_Y, 1)]
 void TemporalPrepassCS(uint3 DT_ID : SV_DispatchThreadID)
@@ -789,12 +828,14 @@ void TemporalPrepassCS(uint3 DT_ID : SV_DispatchThreadID)
 	if (all(DT_ID.xy < MaxPosition))
 	{
 		int index = Position.x + Position.y * TargetViewport_Extent.x;
-		float4 Radiance = InputTexture[Position];
+		
+		float4 Mean = GetMeanFromTextures(Position);
 
 #if PREPASS_PHASE == PREPASS_PHASE_INIT
 
 		FPixelMaterialLightingFingerprint VarianceInfo = (FPixelMaterialLightingFingerprint)0;
-		VarianceInfo.Mean = Radiance;
+		VarianceInfo.Mean = Mean;
+		VarianceInfo.Mean.w = 0;
 		RWVarianceMap[index] = VarianceInfo;
 
 #elif PREPASS_PHASE == PREPASS_PHASE_UPDATE
@@ -802,18 +843,44 @@ void TemporalPrepassCS(uint3 DT_ID : SV_DispatchThreadID)
 		FPixelMaterialLightingFingerprint VarianceInfo = RWVarianceMap[index];
 		
 		float4 PreviousMean = VarianceInfo.Mean;
-		float4 CurrentValue = (Radiance - PreviousMean) * Iteration + Radiance;
+		float4 CurrentValue = (Mean - PreviousMean) * Iteration + Mean;
 		
-		VarianceInfo.Mean = Radiance; 
+		VarianceInfo.Mean = Mean;
 		VarianceInfo.Mean.w = Iteration;
 		VarianceInfo.Var += (CurrentValue - VarianceInfo.Mean)*(CurrentValue - PreviousMean);
 
 		RWVarianceMap[index] = VarianceInfo;
 #else
+	#error "Not implemented" 
 #endif
 	}
 }
 #endif // TEMPORAL_PREPASS
+
+#if PREPASS_GENERATE_TEXTURE
+RWTexture2D<float4> OutputTexture;
+StructuredBuffer<FPixelMaterialLightingFingerprint> VarianceMap;
+
+[numthreads(THREAD_SIZE_X, THREAD_SIZE_Y, 1)]
+void PrepassGenerateTextureCS(uint3 DT_ID : SV_DispatchThreadID)
+{
+	int2 Position = (int2)DT_ID.xy;
+	int2 MaxPosition = int2(TargetViewport_Extent);
+	if (all(DT_ID.xy < MaxPosition))
+	{
+		int index = Position.x + Position.y * TargetViewport_Extent.x;
+		FPixelMaterialLightingFingerprint VarianceInfo = VarianceMap[index];
+
+		float4 StandDerivation= sqrt((VarianceInfo.Var) / (VarianceInfo.Mean.w + 1));
+
+#if VARIANCE_TYPE == RADIANCE_ALBEDO_NORMAL_SINGLECHANNEL
+		// The normal variance is indicated by 1 - sqrt for the lengh2(normal).
+		StandDerivation.z = 1 - sqrt(VarianceInfo.Mean.z);
+#endif
+		OutputTexture[Position] = float4(StandDerivation.xyz, 1.0f);
+	}
+}
+#endif // PREPASS_GENERATE_TEXTURE
 
 #if TEMPORAL_FEATURE_FUSION
 //Use Albedo, Normal, and Radiance Texture to create another feature vector
@@ -936,7 +1003,7 @@ uint MipLevel;
 float4 Get3x3Blur(int2 Position)
 {
 	float2 BufferUV = GetBufferUVFromPosition(Position, MipLevel);
-	float2 HalfPixel = 0.5f * (1 << MipLevel) * TargetViewport_ExtentInverse;
+	float2 HalfPixel = 0.5f * (1u << MipLevel) * TargetViewport_ExtentInverse;
 
 #if 0
 	//Sampling pattern and weights
@@ -1307,7 +1374,7 @@ void VisualizePathTracingMotionVector(
 	float4 Velocity = TemporalDenoisingMotionVector.Load(TexCoord);
 
 	// draw the denoised scene
-	OutColor.rgb = DenoisedTexture.Load(TexCoord) * View.PreExposure;
+	OutColor.rgb = DenoisedTexture.Load(TexCoord).rgb * View.PreExposure;
 
 #if VISUALIZE_COLOR_ENCODING
 	float s, h, v;

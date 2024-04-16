@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	DistortionCommon.ush
 =============================================================================*/
@@ -19,7 +21,7 @@ float2 ComputeBufferUVDistortion(
 #elif REFRACTION_USE_INDEX_OF_REFRACTION
 	// we assume the camera is in air
 	float AirIOR = 1.0f;
-#if REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT || STRATA_OPTIMIZED_UNLIT
+#if REFRACTION_ROOT_NODE_OVERRIDES_DEFAULT || SUBSTRATE_OPTIMIZED_UNLIT
 	float MaterialIOR = GetMaterialRefractionIOR(RefractionData);
 #else
 	float MaterialIOR = InMaterialIOR;
@@ -38,11 +40,14 @@ float2 ComputeBufferUVDistortion(
 
 	float2 BufferUVDistortion = ViewportUVDistortion * ResolvedView.ViewSizeAndInvSize.xy * ResolvedView.BufferSizeAndInvSize.zw;
 
-	//clip if the distortion distance (squared) is too small to be noticed
-	//this will result in a less expensive apply pass since the clipped pixels won't set stencil to pass
-	if (TryToClip)
+	// Clip if the distortion distance (squared) is too small to be noticed.
+	// This will result in a less expensive apply pass since the clipped pixels won't set stencil to pass.
+	// We only clip if the distortion is less than the size of a pixel of the unscaled viewport, i.e. dynamic resolution = 100%, to ensure a good reconstruction.
+	const float2 FullResolutionDistortionPixelSize = ResolvedView.BufferSizeAndInvSize.zw;
+	if (TryToClip && 
+		all(abs(BufferUVDistortion) < FullResolutionDistortionPixelSize))
 	{
-		clip(dot(BufferUVDistortion, BufferUVDistortion) - .00001);
+		clip(-1.0f);
 	}
 
 	// When ISR is enabled we store two FOVs in the DistortionParameters and compute the aspect ratio here

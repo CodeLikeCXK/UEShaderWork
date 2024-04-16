@@ -4,6 +4,9 @@
 GPUFastFourierTransformCore.usf: Core Fast Fourier Transform Code
 =============================================================================*/
 
+//------------------------------------------------------- RECOMPILE HASH
+#pragma message("UESHADERMETADATA_VERSION B96BD6F6-825A-4B16-AA27-96502C97998C")
+
 
 // This file requires the two values to be defined.
 // SCAN_LINE_LENGTH must be a power of RADIX and RADIX in turn must be a power of two 

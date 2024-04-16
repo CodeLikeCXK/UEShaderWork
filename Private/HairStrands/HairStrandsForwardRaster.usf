@@ -25,36 +25,6 @@ uint2 UnpackTileCoord(uint In)
 	return uint2(In & 0xffff, (In >> 16) & 0xffff);
 }
 
-uint PackR11G11B10F(float3 rgb)
-{
-	uint r = (f32tof16(rgb.r) << 17) & 0xFFE00000;
-	uint g = (f32tof16(rgb.g) << 6) & 0x001FFC00;
-	uint b = (f32tof16(rgb.b) >> 5) & 0x000003FF;
-	return r | g | b;
-}
-
-float3 UnpackR11G11B10F(uint rgb)
-{
-	float r = f16tof32((rgb >> 17) & 0x7FF0);
-	float g = f16tof32((rgb >> 6) & 0x7FF0);
-	float b = f16tof32((rgb << 5) & 0x7FE0);
-	return float3(r, g, b);
-}
-
-uint PackRG16(float2 In)
-{
-#if COMPILER_SUPPORTS_PACK_INTRINSICS
-	return PackUInt2ToUInt(f32tof16(In.r), f32tof16(In.g));
-#else
-	return f32tof16(In.r) | (f32tof16(In.g) << 16);
-#endif
-}
-
-float2 UnpackRG16(uint In)
-{
-	return float2(f16tof32(In), f16tof32(In >> 16));
-}
-
 uint PackDepth(float In)
 {
 	return asuint(In);
@@ -73,13 +43,13 @@ struct FDepthRange
 
 uint PackDepthRange(FDepthRange In)
 {
-	return PackRG16(float2(In.MinZ, In.MaxZ));
+	return PackFloat2ToUInt(In.MinZ, In.MaxZ);
 }
 
 FDepthRange UnpackDepthRange(uint In)
 {
 	FDepthRange Out;
-	const float2 D = UnpackRG16(In);
+	const float2 D = UnpackFloat2FromUInt(In);
 	Out.MinZ = D.x;
 	Out.MaxZ = D.y;
 	return Out;
@@ -244,14 +214,15 @@ float	RadiusAtDepth1;
 ///////////////////////////////////////////////////////////////////////////
 // Control points
 Buffer<float4> ControlPoints;
-Texture2D<uint> ControlPointCount;
+StructuredBuffer<uint> ControlPointCount;
 uint MaxControlPointCount;
 
 uint GetControlPointCount()
 {
-	return ControlPointCount.Load(uint3(0,0,0));
+	return ControlPointCount[0];
 }
 
+// Custom encoding for forward rasterizer. Position are 32bits float. This is temporary.
 FHairControlPoint UnpackHairControlPoint(uint InPrimId)
 {
 	const float4 Packed = ControlPoints[InPrimId];
@@ -284,7 +255,7 @@ void CalcHomogenousPos(in uint PrimId, out float4 HP, out uint Type)
 	const FHairControlPoint CP = UnpackHairControlPoint(PrimId);
 
 	const float3 WP = CP.Position; // This is actually WorldPosition
-	HP = mul(float4(WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip)); // TODO move this at least into translated world space
+	HP = mul(float4(WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip)); // TODO move this at least into translated world space
 	Type = CP.Type;
 }
 
@@ -293,7 +264,7 @@ void CalcHomogenousPosAndRad(in uint PrimId, out float4 HP, out float Rad, out u
 	const FHairControlPoint CP = UnpackHairControlPoint(PrimId);
 
 	const float3 WP = CP.Position; // This is actually WorldPosition
-	HP = mul(float4(WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+	HP = mul(float4(WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 	Rad = CP.WorldRadius;
 	Type = CP.Type;
 }
@@ -895,7 +866,7 @@ void CompactionCS(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadI
 
 			FDepthRange DepthRange;
 			DepthRange.MinZ = group_MinZ;
-			DepthRange.MinZ = group_MaxZ;
+			DepthRange.MaxZ = group_MaxZ;
 			StoreOutVisTileData(OutData, CompactedTile, VT_MinMaxDepth, PackDepthRange(DepthRange));
 		}
 	}
@@ -1208,19 +1179,17 @@ float3 UnpackColorData(uint In)
 
 uint2 PackVelocityData(float4 In)
 {
-	return uint2(PackRG16(In.xy), PackRG16(In.zw));
+	return uint2(PackFloat2ToUInt(In.xy), PackFloat2ToUInt(In.zw));
 }
 
 float4 UnpackVelocityData(uint2 In)
 {
-	return float4(UnpackRG16(In.x), UnpackRG16(In.y));
+	return float4(UnpackFloat2FromUInt(In.x), UnpackFloat2FromUInt(In.y));
 }
 
 float3 LoadSampleColor(uint InPrimId, uint2 InSampleResolution)
 {
-	uint2 SampleCoord = 0;
-	SampleCoord.x = InPrimId % InSampleResolution.x;
-	SampleCoord.y = InPrimId / InSampleResolution.x;
+	const uint2 SampleCoord = GetHairSampleCoord(InPrimId, InSampleResolution);
 	return SampleLightingTexture.Load(uint3(SampleCoord, 0)).xyz;
 }
 
@@ -1277,12 +1246,7 @@ void RasterCS(
 	uint   Thread_LoopCountToFullCoverage = 0;
 	uint2  Thread_PixelCoord = 0;
 
-	uint2 SampleLightingEffectiveResolution = 0;
-	{
-		const uint EffectivePointCount = ControlPointCount.Load(uint3(0, 0, 0));
-		SampleLightingEffectiveResolution.x = ceil(sqrt(EffectivePointCount));
-		SampleLightingEffectiveResolution.y = SampleLightingEffectiveResolution.x;
-	}
+	const uint2 SampleLightingEffectiveResolution = GetHairSampleResolution(ControlPointCount[0]);
 
 	LOOP
 	for (uint WorkIndex = 0; WorkIndex < MAX_WORK_COUNT; WorkIndex++)
@@ -1835,9 +1799,8 @@ void RasterCS(
 
 										// Compute coverage
 										// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
-										const bool bIsOrthoView = false;
 										const float SceneDistance = ConvertFromDeviceZ(Depth);
-										const float MinHairRadius = bIsOrthoView ? RadiusAtDepth1 : (SceneDistance * RadiusAtDepth1);
+										const float MinHairRadius = ConvertGivenDepthRadiusForProjectionType(RadiusAtDepth1, SceneDistance);
 										const float HairRadius = lerp(Rad0, Rad1, AlphaColor);
 										Sample.Coverage = saturate(HairRadius / MinHairRadius);
 
