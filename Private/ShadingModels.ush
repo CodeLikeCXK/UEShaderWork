@@ -789,8 +789,8 @@ FDirectLighting YivanToonBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, 
 		float3(0.0,0.0,0.0),
 		float3(0.0,0.0,0.0)
 	};
-	//use metallic to control step
-	float FalloffMask=Falloff*step(GBuffer.Metallic,NoL);
+	//use roughness to control step
+	float FalloffMask=Falloff*step(GBuffer.Roughness,NoL);
 	Lighting.Diffuse=AreaLight.FalloffColor * FalloffMask * GBuffer.DiffuseColor * (1/3.1415926);
 	return Lighting;
 }
