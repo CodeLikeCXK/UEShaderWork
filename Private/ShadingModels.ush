@@ -264,7 +264,7 @@ half3 DualSpecularGGX(half AverageRoughness, half Lobe0Roughness, half Lobe1Roug
 FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
 	BxDFContext Context;
-	FDirectLighting Lighting;
+	//FDirectLighting Lighting;
 
 #if SHADING_PATH_MOBILE
 	InitMobile(Context, N, V, L, NoL);
@@ -284,6 +284,7 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 
 //replace default lit with a simple toon shader to see effect,the original is below. Use ctrl+shift+/ to undo that when necessary.
 //
+//FDirectLighting Lighting;
 // #if SUPPORTS_ANISOTROPIC_MATERIALS
 // 	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
 // #else
