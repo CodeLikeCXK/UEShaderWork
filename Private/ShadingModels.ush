@@ -261,27 +261,63 @@ half3 DualSpecularGGX(half AverageRoughness, half Lobe0Roughness, half Lobe1Roug
 #endif
 }
 
+
+//add a brdf for toon
+float F_Schlick_ScaleTerm(float3 SpecularColor, float VoH)
+{
+	float Fc = Pow5(1 - VoH); // 1 sub, 3 mul
+	return saturate( 50.0 * SpecularColor.g ) * Fc + (1 - Fc);
+}
+
+//add toon specular
+float SpecularGGX_ScaleTerm(float Roughness, float3 SpecularColor, BxDFContext Context, float NoL, FAreaLight AreaLight)
+{
+	float a2 = Pow4(Roughness);
+	float Energy = EnergyNormalization(a2, Context.VoH, AreaLight);  
+	// Generalized microfacet specular
+	float D = D_GGX(a2, Context.NoH) * Energy;
+	float Vis = Vis_SmithJointApprox(a2, Context.NoV, NoL);        
+
+	// cel-shading version
+	float FScale = F_Schlick_ScaleTerm(SpecularColor, Context.VoH);
+	return (D * Vis) * FScale;  
+}
+
+
 FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
 	BxDFContext Context;
-	//FDirectLighting Lighting;
+	FDirectLighting Lighting;
 
-#if SHADING_PATH_MOBILE
-	InitMobile(Context, N, V, L, NoL);
-#else
-	Init( Context, N, V, L );
-#endif
-	FDirectLighting Lighting = 
+//replace default lit with a simple toon shader to see effect
+	#if SHADING_PATH_MOBILE
+			InitMobile(Context, N, V, L, NoL);
+	#else
+			Init(Context, N, V, L);
+	#endif
+	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
+	Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
+
+	// Remember GBufferD is a R8B8G8A8..so value would be clamped to 0,1, so we pass (1 / Band) from MatGraph...
+	float InvBandsInput = GBuffer.Metallic;		// 2 bands <=> each band has 0.5 width	
+	float Band = ceil(1.0f / (float)InvBandsInput);
+	float InvBands = 1.0f / Band;
+	float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
+
+	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
+
+	if (IsRectLight(AreaLight))
+		// Our Custom Shading Model is not supported in this scenario
+		Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
+	else
 	{
-		float3(0.0,0.0,0.0),
-		float3(0.0,0.0,0.0),
-		float3(0.0,0.0,0.0)
-	};
-	//use roughness to control step
-	float FalloffMask=Falloff*step(GBuffer.Roughness,NoL);
-	Lighting.Diffuse=AreaLight.FalloffColor * FalloffMask * GBuffer.DiffuseColor * (1/3.1415926);
-	return Lighting;
+		float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
+		Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands));
+	}
 
+	Lighting.Transmission = 0;
+	return Lighting;
+	
 //replace default lit with a simple toon shader to see effect,the original is below. Use ctrl+shift+/ to undo that when necessary.
 //
 //FDirectLighting Lighting;
