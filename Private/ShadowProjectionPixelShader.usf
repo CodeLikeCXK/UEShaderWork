@@ -3,6 +3,10 @@
 /*=============================================================================
 	ShadowProjectionPixelShader.usf: Pixel shader for projecting a shadow depth buffer onto the scene.
 =============================================================================*/
+#ifndef FORCE_FLOATS
+// TODO: remove this requirement: Iphone6/Metal needs full float for the depth comparison.
+#define FORCE_FLOATS (COMPILER_METAL)
+#endif
 
 #ifndef USE_FADE_PLANE
 	#define USE_FADE_PLANE 0
@@ -24,12 +28,15 @@
 #define SPOT_LIGHT_PCSS 0
 #endif
 
-#include "HairStrands/HairStrandsVisibilityCommonStruct.ush"
+
 #include "Common.ush"
 
-// Needs to bind MobileBasePass UB since the modulated shadow is in mobile base pass. 
-#if MODULATED_SHADOWS
-	#define MobileSceneTextures MobileBasePass.SceneTextures
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM5
+	// Gather() is supported
+	#define FEATURE_GATHER4 1
+#else
+	// Gather() is not supported
+	#define FEATURE_GATHER4 0
 #endif
 
 #include "ShadowProjectionCommon.ush"
@@ -80,20 +87,12 @@ float3 ModulatedShadowBlendOp(float3 Source)
 	return Source.rgb*Dest.rgb;
 }
 
-// PCF falloff is overly blurry, apply to get
-// a more reasonable look artistically. Should not be applied to
-// other passes that target pbr (e.g., raytracing and denoising).
-float ApplyPCFOverBlurCorrection(float Shadow)
-{
-	return Square(Shadow);
-}
 
 #if SUBPIXEL_SHADOW
 #include "HairStrands/HairStrandsVisibilityCommon.ush"
 float2 ShadowNearAndFarDepth;
+Texture2D<uint4> HairCategorizationTexture;
 #endif
-
-#include "Strata/Strata.ush"
 
 /**
 * Entry point for uniform manual PCF that supports lights using normal shadows.
@@ -116,18 +115,19 @@ void Main(
 	float SceneW = CalcSceneDepth(ScreenUV);
 
 	bool bIsSubsurfaceCompatible = true;
-	const uint3 PixelCoord = uint3(floor(SVPos.xy), 0);
 #if SUBPIXEL_SHADOW
 	const bool bUseFadePlane = bCascadeUseFadePlane > 0;
-	SceneW = ConvertFromDeviceZ(HairStrands.HairOnlyDepthTexture.Load(PixelCoord).x);
+	const uint3 PixelCoord = uint3(floor(SVPos.xy), 0);
+	const FCategorizationData CategorizationData = DecodeCategorizationData(HairCategorizationTexture.Load(PixelCoord));
+	SceneW = ConvertFromDeviceZ(CategorizationData.ClosestDepth);
 	bIsSubsurfaceCompatible = false;
 #endif
 
 	float4 ScreenPosition = float4(((ScreenUV.xy - View.ScreenPositionScaleBias.wz ) / View.ScreenPositionScaleBias.xy) * SceneW, SceneW, 1);
 	float4 ShadowPosition = mul(ScreenPosition, ScreenToShadowMatrix);
-	float3 TranslateWorldPosition = mul(ScreenPosition, View.ScreenToTranslatedWorld).xyz;
+	float3 WorldPosition = mul(ScreenPosition, View.ScreenToWorld).xyz;
 
-	float ShadowZ = 1 - ShadowPosition.z;
+	float ShadowZ = ShadowPosition.z;
 	ShadowPosition.xyz /= ShadowPosition.w;
 
 #if MODULATED_SHADOWS
@@ -181,7 +181,7 @@ void Main(
 		#if SPOT_LIGHT_PCSS
 		{
 			float CotanOuterCone = DeferredLightUniforms.SpotAngles.x * rsqrt(1. - DeferredLightUniforms.SpotAngles.x * DeferredLightUniforms.SpotAngles.x);
-			float WorldLightDistance = dot(DeferredLightUniforms.Direction, GetDeferredLightTranslatedWorldPosition() - TranslateWorldPosition);
+			float WorldLightDistance = dot(DeferredLightUniforms.Direction, DeferredLightUniforms.Position - WorldPosition);
 			Settings.ProjectedSourceRadius = 0.5 * DeferredLightUniforms.SourceRadius * CotanOuterCone / WorldLightDistance;
 			Settings.TanLightSourceAngle = 0;
 		}
@@ -208,18 +208,10 @@ void Main(
 	{
 		#if SHADING_PATH_DEFERRED && !FORWARD_SHADING && !SUBPIXEL_SHADOW
 			// Attenuate soft transition based on the angle with the light and the shading normal (acts as a receiver bias)
-			const bool bIsDirectional = LightPositionOrDirection.w == 0;
-			const float3 LightDirection = bIsDirectional ? -LightPositionOrDirection.xyz : normalize(LightPositionOrDirection.xyz - TranslateWorldPosition);
-
-		#if STRATA_ENABLED
-			const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(SVPos.xy, 0)));
-			const float3 WorldNormal = TopLayerData.WorldNormal;
-		#else
 			FGBufferData GBufferData = GetGBufferData(ScreenUV);
-			const float3 WorldNormal = GBufferData.WorldNormal;
-		#endif
-
-			const float NoL = saturate(dot(WorldNormal, LightDirection));
+			const bool bIsDirectional = LightPositionOrDirection.w == 0;
+			const float3 LightDirection = bIsDirectional ? -LightPositionOrDirection.xyz : normalize(LightPositionOrDirection.xyz - WorldPosition);
+			const float NoL = saturate(dot(GBufferData.WorldNormal, LightDirection));
 		#endif
 		
 		FPCFSamplerSettings Settings;
@@ -252,89 +244,55 @@ void Main(
 
 	#if FEATURE_LEVEL >= FEATURE_LEVEL_SM4 && !FORWARD_SHADING && !APPLY_TRANSLUCENCY_SHADOWS && !SUBPIXEL_SHADOW
 
-		bool bHasSubsurface				= false;
-		bool bHasSubsurfaceTransmission	= false;
-		bool bIsEyeOrHair 				= false;
-	#if STRATA_ENABLED
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelCoord.xy, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		FStrataPixelHeader StrataHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-		if (IsStrataMaterial(StrataHeader))
-		{
-			bIsEyeOrHair				= StrataGetBSDFType(StrataHeader) == STRATA_BSDF_TYPE_HAIR || StrataGetBSDFType(StrataHeader) == STRATA_BSDF_TYPE_EYE;
-			bHasSubsurface				= HasSubsurface(StrataHeader) || bIsEyeOrHair;
-			bHasSubsurfaceTransmission	= HasSubsurface(StrataHeader);
-		}
-	#else // STRATA_ENABLED
 		FGBufferData GBufferData = GetGBufferData(ScreenUV);
-		{
-			bHasSubsurface = IsSubsurfaceModel(GBufferData.ShadingModelID);
-			bHasSubsurfaceTransmission = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE;
-			bIsEyeOrHair = GBufferData.ShadingModelID == SHADINGMODELID_HAIR || GBufferData.ShadingModelID == SHADINGMODELID_EYE;
-		}
-	#endif // STRATA_ENABLED
 
 		BRANCH
-		if (bIsSubsurfaceCompatible && bHasSubsurface)
+		if (bIsSubsurfaceCompatible && IsSubsurfaceModel(GBufferData.ShadingModelID))
 		{
-			#if STRATA_ENABLED
-			const FStrataSubsurfaceHeader SSSHeader = StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, SVPos.xy);
-			const uint SSSType = StrataSubSurfaceHeaderGetSSSType(SSSHeader);
-			#endif
-
-			float Density = 1;
-			if (!bIsEyeOrHair)
+			float Opacity = GBufferData.CustomData.a;
+			float Density = SubsurfaceDensityFromOpacity(Opacity);
+			if( GBufferData.ShadingModelID == SHADINGMODELID_HAIR || GBufferData.ShadingModelID == SHADINGMODELID_EYE )
 			{
-			#if STRATA_ENABLED
-				if (SSSType != SSS_TYPE_INVALID)
-				{
-					// Disble accurate SSS transmission if SSS type is no using Diffusion or Diffusion Profile
-					bHasSubsurfaceTransmission = bHasSubsurfaceTransmission && (SSSType >= SSS_TYPE_DIFFUSION);
-					Density = SubsurfaceDensityFromOpacity(StrataSubSurfaceHeaderGetOpacity(SSSHeader));
-				}
-			#else // STRATA_ENABLED
-				Density = SubsurfaceDensityFromOpacity(GBufferData.CustomData.a);
-			#endif // STRATA_ENABLED
+				Opacity = 1;
+				Density = 1;
 			}
-			
-			FPCFSamplerSettings Settings;
+			//@todo - Use a larger kernel filter based on material opacity
+			// This is not being done currently because a varying opacity causes discontinuities in the shadow result
+			// Note: Snapping based on the largest size kernel is done in FProjectedShadowInfo::FProjectedShadowInfo, MaxDownsampleFactor is set to 4
+			// Only factors of MaxDownsampleFactor will be stable
+			float SquareRootFilterScale = lerp(1.999f, 0, Opacity);
+			int SquareRootFilterScaleInt = int(SquareRootFilterScale) + 1;
+
+			#if UNFILTERED_SHADOW_PROJECTION
+				float ShadowMapDepth = Texture2DSampleLevel(ShadowDepthTexture, ShadowDepthTextureSampler, ShadowPosition.xy, 0).x;
+				SSSTransmission = CalculateSubsurfaceOcclusion(Density, LightSpacePixelDepthForSSS, ShadowMapDepth.xxx).x;
+			#else
+		
+				// default code path
+				FPCFSamplerSettings Settings;
 				
-			Settings.ShadowDepthTexture = ShadowDepthTexture;
-			Settings.ShadowDepthTextureSampler = ShadowDepthTextureSampler;
-			Settings.ShadowBufferSize = ShadowBufferSize;
-			Settings.TransitionScale = SoftTransitionScale.z;
-			Settings.SceneDepth = LightSpacePixelDepthForSSS + ProjectionDepthBiasParameters.x;
-			Settings.bSubsurface = true;
-			Settings.bTreatMaxDepthUnshadowed = false;
-			Settings.DensityMulConstant = Density * ProjectionDepthBiasParameters.w;
-			Settings.ProjectionDepthBiasParameters = ProjectionDepthBiasParameters.xw;
+				Settings.ShadowDepthTexture = ShadowDepthTexture;
+				Settings.ShadowDepthTextureSampler = ShadowDepthTextureSampler;
+				Settings.ShadowBufferSize = ShadowBufferSize;
+				Settings.TransitionScale = SoftTransitionScale.z;
+				Settings.SceneDepth = LightSpacePixelDepthForSSS + ProjectionDepthBiasParameters.x;
+				Settings.bSubsurface = true;
+				Settings.bTreatMaxDepthUnshadowed = false;
+				Settings.DensityMulConstant = Density * ProjectionDepthBiasParameters.w;
+				Settings.ProjectionDepthBiasParameters = ProjectionDepthBiasParameters.xw;
 
-			#if USE_TRANSMISSION
-			if (bHasSubsurfaceTransmission)
-			{
-			#if STRATA_ENABLED
-				const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(SVPos.xy, 0)));
-				const float3 WorldNormal = TopLayerData.WorldNormal;
-
-				// For non-profile version, use default transmission parameters (only NormalScale & ExtinctionScale are used)
-				FTransmissionProfileParams TransmissionParams = InitTransmissionProfileParams();
-				if (SSSType == SSS_TYPE_DIFFUSION_PROFILE)
+			  #if USE_TRANSMISSION
+				if (GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE)
 				{
-					TransmissionParams = GetTransmissionProfileParams(StrataSubSurfaceHeaderGetProfileId(SSSHeader));
+					SSSTransmission = CalcTransmissionThickness(ScreenPosition.xyz, LightPositionAndInvRadius.xyz, GBufferData, Settings);
 				}
-			#else // STRATA_ENABLED
-				float3 WorldNormal = GBufferData.WorldNormal;
-				FTransmissionProfileParams TransmissionParams = GetTransmissionProfileParams(ExtractSubsurfaceProfileInt(GBufferData));
-			#endif // STRATA_ENABLED
-				SSSTransmission = CalcTransmissionThickness(ScreenPosition.xyz, LightPositionAndInvRadius.xyz, WorldNormal, TransmissionParams, Settings);
-			}
-			else
+				else
+			  #endif
+				{
+					// ideally we use a larger filter kernel for SSSbut as Gather4 makes that harder
+					SSSTransmission = ManualPCF(ShadowPosition.xy, Settings);
+				}
 			#endif
-			{
-				// ideally we use a larger filter kernel for SSSbut as Gather4 makes that harder
-				SSSTransmission = ManualPCF(ShadowPosition.xy, Settings);
-			}
-
-			SSSTransmission = ApplyPCFOverBlurCorrection(SSSTransmission);
 		}
 
 	#endif
@@ -347,23 +305,16 @@ void Main(
 
 	// 0 is shadowed, 1 is unshadowed
 	// RETURN_COLOR not needed unless writing to SceneColor;
+	float FadedShadow = lerp(1.0f, Square(Shadow), ShadowFadeFraction * PerObjectDistanceFadeFraction);
 
-	// Apply PCF overblur correction for shadow when PCSS & PCF.
-	#define CORRECT_SHADOW_PCF_BLUR  !UNFILTERED_SHADOW_PROJECTION && !APPLY_TRANSLUCENCY_SHADOWS
-
-	#if CORRECT_SHADOW_PCF_BLUR
-		Shadow = ApplyPCFOverBlurCorrection(Shadow);
-	#endif
-	float FadedShadow = lerp(1.0f, Shadow, ShadowFadeFraction * PerObjectDistanceFadeFraction);
-
-#if FORWARD_SHADING || SHADING_PATH_MOBILE 
-	float LightInfluenceMask = GetLightInfluenceMask(TranslateWorldPosition);
+#if FORWARD_SHADING
+	float LightInfluenceMask = GetLightInfluenceMask(WorldPosition);
 	// Constrain shadowing from this light to pixels inside the light's influence, since other non-overlapping lights are packed into the same channel
 	FadedShadow = lerp(1, FadedShadow, LightInfluenceMask);
 	// Write into all channels, the write mask will constrain to the correct one
 	OutColor = EncodeLightAttenuation(FadedShadow);
 #else
-	float FadedSSSShadow = lerp(1.0f, SSSTransmission, ShadowFadeFraction * PerObjectDistanceFadeFraction);
+	float FadedSSSShadow = lerp(1.0f, Square(SSSTransmission), ShadowFadeFraction * PerObjectDistanceFadeFraction);
 
 	// the channel assignment is documented in ShadowRendering.cpp (look for Light Attenuation channel assignment)
 	OutColor = EncodeLightAttenuation(half4(FadedShadow, FadedSSSShadow, FadedShadow, FadedSSSShadow));
@@ -402,10 +353,10 @@ void MainOnePassPointLightPS(
 
 #if SUBPIXEL_SHADOW
 	const uint3 PixelCoord = uint3(floor(SVPos.xy), 0);
-	const float HairSampleDepth = HairStrands.HairOnlyDepthTexture.Load(PixelCoord).x;
-	if (HairSampleDepth > 0)
+	const FCategorizationData CategorizationData = DecodeCategorizationData(HairCategorizationTexture.Load(PixelCoord));
+	if (CategorizationData.PixelCoverage > 0)
 	{
-		SceneW = ConvertFromDeviceZ(HairSampleDepth);
+		SceneW = ConvertFromDeviceZ(CategorizationData.ClosestDepth);
 	}
 	else
 	{
@@ -414,11 +365,11 @@ void MainOnePassPointLightPS(
 #endif
 
 	float2 ScreenPosition = ( ScreenUV.xy - View.ScreenPositionScaleBias.wz ) / View.ScreenPositionScaleBias.xy;
-	float3 TranslateWorldPosition = mul(float4(ScreenPosition.xy * SceneW, SceneW, 1), View.ScreenToTranslatedWorld).xyz;
+	float3 WorldPosition = mul(float4(ScreenPosition.xy * SceneW, SceneW, 1), View.ScreenToWorld).xyz;
 
 	// For debugging
 #define OUTPUT_CUBE_SHADOW_DEPTH_NO_FILTERING 0
-	float3 WorldSampleToLightVec = LightPositionAndInvRadius.xyz - TranslateWorldPosition.xyz;
+	float3 WorldSampleToLightVec = LightPositionAndInvRadius.xyz - WorldPosition.xyz;
 #if OUTPUT_CUBE_SHADOW_DEPTH_NO_FILTERING
 	// Note: point light shadow depth is Z / W, not linear
 #if OPENGL_PROFILE || COMPILER_VULKAN || COMPILER_SWITCH
@@ -433,31 +384,22 @@ void MainOnePassPointLightPS(
 	float SlopeBias = 0;
 #if !SUBPIXEL_SHADOW
 	{
-#if STRATA_ENABLED
-		const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(SVPos.xy, 0)));
-		const float3 WorldNormal = TopLayerData.WorldNormal;
-#else // STRATA_ENABLED
 		FGBufferData GBufferData = GetGBufferData(ScreenUV);
-		const float3 WorldNormal = GBufferData.WorldNormal;
-#endif // STRATA_ENABLED
-
 		const float3 LightDirection = normalize(WorldSampleToLightVec);
-		const float NoL = saturate(dot(WorldNormal, LightDirection));
-		SlopeBias = (1 - NoL) * PointLightDepthBias.y;
+		const float NoL = saturate(dot(GBufferData.WorldNormal, LightDirection));
+		SlopeBias = (1-NoL) * PointLightDepthBias.y;
 	}
 #endif
 
-	float Shadow = CubemapHardwarePCF(TranslateWorldPosition, LightPositionAndInvRadius.xyz, LightPositionAndInvRadius.w, PointLightDepthBias.x, SlopeBias, PointLightDepthBias.z);
+	float Shadow = CubemapHardwarePCF(WorldPosition, LightPositionAndInvRadius.xyz, LightPositionAndInvRadius.w, PointLightDepthBias.x, SlopeBias, PointLightDepthBias.z);
 
 	Shadow = saturate( (Shadow - 0.5) * ShadowSharpen + 0.5 );
-
-	Shadow = ApplyPCFOverBlurCorrection(Shadow);
 #endif
 
-	float FadedShadow = lerp(1.0f, Shadow, ShadowFadeFraction);
+	float FadedShadow = lerp(1.0f, Square(Shadow), ShadowFadeFraction);
 
 #if FORWARD_SHADING
-	float LightInfluenceMask = GetLightInfluenceMask(TranslateWorldPosition);
+	float LightInfluenceMask = GetLightInfluenceMask(WorldPosition);
 	FadedShadow = lerp(1, FadedShadow, LightInfluenceMask);
 	OutColor = EncodeLightAttenuation(FadedShadow);
 #else
@@ -471,32 +413,13 @@ void MainOnePassPointLightPS(
 
 #if USE_TRANSMISSION
 	float Thickness = 1.0f;
-
-#if STRATA_ENABLED
-
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(SVPos.xy, 0)));
-
-	const FStrataSubsurfaceHeader SSSHeader = StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, SVPos.xy);
-
-	const bool IsSubsurfaceProfile = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
-	const float3 WorldNormal = TopLayerData.WorldNormal;
-	const FTransmissionProfileParams TransmissionParams = GetTransmissionProfileParams(StrataSubSurfaceHeaderGetProfileId(SSSHeader));
-
-#else // STRATA_ENABLED
-
 	// TODO: Use existing GBuffer data, instead of overwriting?
 	FGBufferData GBufferData = GetGBufferData(ScreenUV);
-
-	bool IsSubsurfaceProfile = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE;
-	float3 WorldNormal = GBufferData.WorldNormal;
-	FTransmissionProfileParams TransmissionParams = GetTransmissionProfileParams(ExtractSubsurfaceProfileInt(GBufferData));
-
-#endif // STRATA_ENABLED
-
 	//if bSubsurface get SSS shadow,else opaque shadow.
+	bool IsSubsurfaceProfile = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE;
 	if (IsSubsurfaceProfile)
 	{
-		Thickness = CalcTransmissionThickness(WorldNormal, TransmissionParams, WorldSampleToLightVec, PointLightProjParameters, LightPositionAndInvRadius.w, 0);
+		Thickness = CalcTransmissionThickness(GBufferData, WorldSampleToLightVec, PointLightProjParameters, LightPositionAndInvRadius.w, 0);
 	}
 	OutColor.a = IsSubsurfaceProfile ? EncodeLightAttenuation(Thickness) : OutColor.b;
 #endif // USE_TRANSMISSION

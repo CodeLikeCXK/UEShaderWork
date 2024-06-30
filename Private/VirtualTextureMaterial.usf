@@ -3,7 +3,6 @@
 // Material shader for runtime virtual texture
 
 #include "Common.ush"
-#include "GammaCorrectionCommon.ush"
 #include "/Engine/Generated/Material.ush"
 #include "/Engine/Generated/VertexFactory.ush"
 
@@ -12,8 +11,6 @@ struct FVirtualTextureVSOutput
 	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
 	float4 Position : SV_POSITION;
 };
-
-#if VERTEXSHADER
 
 void MainVS(
 	FVertexFactoryInput Input,
@@ -24,29 +21,18 @@ void MainVS(
 
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
 
-#if VF_PER_PIXEL_HEIGHTMAP
-	if (HasVertexFactoryPerPixelHeight())
-	{
-		// Special case PerPixel Height for Landscape.
-		// Remove PerVertex Height and apply in Pixel Shader.
-		VFIntermediates.LocalPosition.z = 0;
-	}
-#endif
-
 	float4 WorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates);
 	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);	
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
 
 	{
 		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
-		float4 ClipSpacePosition = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
-		Output.Position = ClipSpacePosition;
+		float4 ClipSpacePosition = INVARIANT(mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip));
+		Output.Position = INVARIANT(ClipSpacePosition);
 	}
 
 	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 }
-
-#endif // VERTEXSHADER
 
 // Prepare for VirtualTextureUnpackNormal() in VirtualTextureCommon.h
 float3 PackNormal( in float3 N )
@@ -55,10 +41,9 @@ float3 PackNormal( in float3 N )
 }
 
 // Prepare for VirtualTextureUnpackHeight() in VirtualTextureCommon.ush
-// LWC_TODO: LWC scale/bias?
-float PackWorldHeight( in FLWCScalar Height, in float2 PackHeightScaleBias )
+float PackWorldHeight( in float Height, in float2 PackHeightScaleBias )
 {
-	return LWCSaturate(LWCAdd(LWCMultiply(Height, PackHeightScaleBias.x), PackHeightScaleBias.y));
+	return saturate(Height * PackHeightScaleBias.x + PackHeightScaleBias.y);
 }
 
 void FPixelShaderInOut_MainPS(
@@ -75,17 +60,6 @@ void FPixelShaderInOut_MainPS(
 
 	float4 ScreenPosition = SvPositionToResolvedScreenPosition(In.SvPosition);
 	float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(In.SvPosition);
-
-#if VF_PER_PIXEL_HEIGHTMAP
-	if (HasVertexFactoryPerPixelHeight())
-	{
-		// Special case PerPixel Height for Landscape.
-		// Assumes Heightmap is camera aligned.
-		float3 LocalPositionDelta = float3(0, 0, GetVertexFactoryPerPixelHeight(Interpolants));
-		TranslatedWorldPosition += TransformLocalVectorToWorld(MaterialParameters, LocalPositionDelta);
-	}
-#endif
-
 	CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, In.SvPosition, ScreenPosition, In.bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
 
 #if VIRTUAL_TEXTURE_OUTPUT
@@ -94,7 +68,7 @@ void FPixelShaderInOut_MainPS(
 	half Specular = GetVirtualTextureOutput1(MaterialParameters);
 	half Roughness = GetVirtualTextureOutput2(MaterialParameters);
 	half3 Normal = GetVirtualTextureOutput3(MaterialParameters);
-	FLWCScalar WorldHeight = GetVirtualTextureOutput4_LWC(MaterialParameters);
+	half WorldHeight = GetVirtualTextureOutput4(MaterialParameters);
 	float Opacity = GetVirtualTextureOutput5(MaterialParameters);
 	float Mask = GetVirtualTextureOutput6(MaterialParameters);
 #else
@@ -103,7 +77,7 @@ void FPixelShaderInOut_MainPS(
 	half Specular = GetMaterialSpecular(PixelMaterialInputs);
 	half Roughness = GetMaterialRoughness(PixelMaterialInputs);
 	half3 Normal = MaterialParameters.WorldNormal;
-	FLWCScalar WorldHeight = LWCGetZ(MaterialParameters.AbsoluteWorldPosition);
+	float WorldHeight = MaterialParameters.AbsoluteWorldPosition.z;
 	float Opacity = GetMaterialOpacity(PixelMaterialInputs);
 	float Mask = 0.f;
 #endif
@@ -113,12 +87,6 @@ void FPixelShaderInOut_MainPS(
 
 #if defined(OUT_BASECOLOR)
 	Out.MRT[0] = float4(BaseColor, 1.f) * Opacity;
-#elif defined(OUT_BASECOLOR_NORMAL_ROUGHNESS)
-	float3 PackedNormal = PackNormal(Normal);
-	//store basecolor in srgb space to improve image quality
-	Out.MRT[0] = float4(LinearToSrgb(BaseColor), 1.0) * Opacity;
-	//not enough channels for sign of normal  z
-	Out.MRT[1] = float4(PackedNormal.x, Roughness, PackedNormal.y, 1.0) * Opacity;
 #elif defined(OUT_BASECOLOR_NORMAL_SPECULAR)
 	float3 PackedNormal = PackNormal(Normal);
 	Out.MRT[0] = float4(BaseColor, 1.f) * Opacity;
@@ -130,17 +98,18 @@ void FPixelShaderInOut_MainPS(
 #endif
 }
 
+
 #define PIXELSHADEROUTPUT_INTERPOLANTS 1
 
-//#if defined(OUT_BASECOLOR)
-//#define PIXELSHADEROUTPUT_MRT0 1
-//#elif defined(OUT_BASECOLOR_NORMAL_SPECULAR)
-//#define PIXELSHADEROUTPUT_MRT0 1
-//#define PIXELSHADEROUTPUT_MRT1 1
-//#define PIXELSHADEROUTPUT_MRT2 1
-//#elif defined(OUT_WORLDHEIGHT)
-//#define PIXELSHADEROUTPUT_MRT0 1
-//#endif
+#if defined(OUT_BASECOLOR)
+#define PIXELSHADEROUTPUT_MRT0 1
+#elif defined(OUT_BASECOLOR_NORMAL_SPECULAR)
+#define PIXELSHADEROUTPUT_MRT0 1
+#define PIXELSHADEROUTPUT_MRT1 1
+#define PIXELSHADEROUTPUT_MRT2 1
+#elif defined(OUT_WORLDHEIGHT)
+#define PIXELSHADEROUTPUT_MRT0 1
+#endif
 
 // all PIXELSHADEROUTPUT_ and "void FPixelShaderInOut_MainPS()" need to be setup before this include
 // this include generates the wrapper code to call MainPS(inout FPixelShaderOutput PixelShaderOutput)

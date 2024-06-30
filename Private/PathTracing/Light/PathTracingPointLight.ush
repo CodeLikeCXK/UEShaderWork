@@ -10,17 +10,17 @@ PathTracingPointLight.ush: Light sampling functions for Point lights
 #include "PathTracingCapsuleLight.ush"
 
 
-FLightHit PointLight_TraceLight(FRayDesc Ray, int LightId)
+FLightHit PointLight_TraceLight(RayDesc Ray, int LightId)
 {
 	if (GetSourceLength(LightId) > 0)
 	{
 		return CapsuleLight_TraceLight(Ray, LightId);
 	}
 
-	float3 TranslatedLightPosition = GetTranslatedPosition(LightId);
+	float3 LightPosition = GetPosition(LightId);
 	float LightRadius = GetRadius(LightId);
 	float LightRadius2 = Pow2(LightRadius);
-	float3 oc = Ray.Origin - TranslatedLightPosition;
+	float3 oc = Ray.Origin - LightPosition;
 	float b = dot(oc, Ray.Direction);
 	// "Precision Improvements for Ray / Sphere Intersection" - Ray Tracing Gems (2019)
 	// https://link.springer.com/content/pdf/10.1007%2F978-1-4842-4427-2_7.pdf
@@ -53,17 +53,17 @@ FLightHit PointLight_TraceLight(FRayDesc Ray, int LightId)
 FLightSample PointLight_SampleLight(
 	int LightId,
 	float2 RandSample,
-	float3 TranslatedWorldPos,
+	float3 WorldPos,
 	float3 WorldNormal
 )
 {
-	float3 LightDirection = GetTranslatedPosition(LightId) - TranslatedWorldPos;
+	float3 LightDirection = GetPosition(LightId) - WorldPos;
 	float LightDistanceSquared = dot(LightDirection, LightDirection);
 
 	FLightSample Result = NullLightSample();
 	if (GetSourceLength(LightId) > 0)
 	{
-		Result = CapsuleLight_SampleLight(LightId, RandSample, TranslatedWorldPos, WorldNormal);
+		Result = CapsuleLight_SampleLight(LightId, RandSample, WorldPos, WorldNormal);
 	}
 	else
 	{
@@ -97,19 +97,19 @@ FLightSample PointLight_SampleLight(
 
 	// NOTE: uses distance to center to keep fadeoff mask consistent for all samples
 	Result.RadianceOverPdf *= ComputeAttenuationFalloff(LightDistanceSquared, LightId);
-	Result.RadianceOverPdf *= ComputeIESAttenuation(LightId, TranslatedWorldPos);
+	Result.RadianceOverPdf *= ComputeIESAttenuation(LightId, WorldPos);
 	return Result;
 }
 
 float PointLight_EstimateLight(
 	int LightId,
-	float3 TranslatedWorldPos,
+	float3 WorldPos,
 	float3 WorldNormal,
 	bool IsTransmissiveMaterial
 )
 {
 	// Distance
-	float3 LightDirection = GetTranslatedPosition(LightId) - TranslatedWorldPos;
+	float3 LightDirection = GetPosition(LightId) - WorldPos;
 	float LightDistanceSquared = dot(LightDirection, LightDirection);
 
 	// Geometric term
@@ -118,30 +118,4 @@ float PointLight_EstimateLight(
 	float LightPower = Luminance(GetColor(LightId));
 	float Falloff = ComputeAttenuationFalloff(LightDistanceSquared, LightId);
 	return LightPower * Falloff * NoL / LightDistanceSquared;
-}
-
-FVolumeLightSampleSetup PointLight_PrepareLightVolumeSample(
-	int LightId,
-	float3 RayOrigin,
-	float3 RayDirection,
-	float TMin,
-	float TMax
-)
-{
-	float3 Center = GetTranslatedPosition(LightId);
-	float AttenuationRadius = rcp(GetAttenuation(LightId));
-	float AttenuationRadius2 = Pow2(AttenuationRadius);
-	float3 oc = RayOrigin - Center;
-	float b = dot(oc, RayDirection);
-	float h = AttenuationRadius2 - length2(oc - b * RayDirection);
-	if (h > 0)
-	{
-		float2 t = -b + float2(-1, +1) * sqrt(h);
-		TMin = max(t.x, TMin);
-		TMax = min(t.y, TMax);
-		float3 C = GetColor(LightId);
-		float LightImportance = max3(C.x, C.y, C.z);
-		return CreateEquiAngularSampler(LightImportance, Center, RayOrigin, RayDirection, TMin, TMax);
-	}
-	return NullVolumeLightSetup();
 }

@@ -6,7 +6,7 @@
 
 RAY_TRACING_ENTRY_CLOSEST_HIT(DeferredMaterialCHS,
 	FDeferredMaterialPayload, Payload,
-	FRayTracingIntersectionAttributes, Attributes)
+	FDefaultAttributes, Attributes)
 {
 	Payload.SortKey = GetHitGroupUserData();
 	Payload.HitT    = RayTCurrent();

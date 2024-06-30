@@ -1,10 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-// Bump to force a rebuild of this shader (when changing related C++ code). Generate unique value on merge conflict.
-#define RAY_TRACING_OCCLUSION_RGS_VERSION 0x8219847B
-
-// Strata use view's resources to read & trace shadow ray
-#define STRATA_MATERIALCONTAINER_IS_VIEWRESOURCE 1
+#include "../HairStrands/HairStrandsVoxelPageCommonStruct.ush"
 
 #include "../Common.ush"
 #include "../MonteCarlo.ush"
@@ -14,13 +10,13 @@
 #include "../ScreenSpaceDenoise/SSDPublic.ush"
 #include "../TransmissionCommon.ush"
 #include "../HairStrands/HairStrandsVisibilityCommon.ush"
-#include "../Strata/Strata.ush"
 #include "RayTracingCommon.ush"
 #include "RayTracingDeferredShadingCommon.ush"
 #include "RayTracingDirectionalLight.ush"
 #include "RayTracingRectLight.ush"
 #include "RayTracingSphereLight.ush"
-#include "RayTracingCapsuleLight.ush"
+#include "RayTracingSpotLight.ush"
+#include "RayTracingPointLight.ush"
 
 /** Light types */
 #define LIGHT_TYPE_DIRECTIONAL 0
@@ -44,12 +40,10 @@ int2 PixelOffset;
 float TraceDistance;
 float LODTransitionStart;
 float LODTransitionEnd;
-float AvoidSelfIntersectionTraceDistance;
 uint bTransmissionSamplingDistanceCulling;
 uint TransmissionSamplingTechnique;
 uint RejectionSamplingTrials;
 uint bAcceptFirstHit;
-uint bTwoSidedGeometry;
 
 #define TransmissionSampling_ConstantTrackingInfiniteDomain 0
 #define TransmissionSampling_ConstantTrackingFiniteDomain 1
@@ -58,29 +52,29 @@ uint bTwoSidedGeometry;
 #include "../HairStrands/HairStrandsRaytracing.ush"
 uint				bUseHairVoxel;
 float				HairOcclusionThreshold;
+Texture2D<uint4>	HairCategorizationTexture;
 Texture2D<uint>		HairLightChannelMaskTexture;
 
-bool NeedTraceHair(
+void NeedTraceHair(
 	in uint2 PixelCoord,
+	inout bool bTraceHairRay,
 	inout float HairDeviceZ)
 {
-	const float HairSampleDepth = HairStrands.HairOnlyDepthTexture.Load(uint3(PixelCoord, 0)).x;
-	bool bTraceHairRay = false;
+	const FCategorizationData Categorization = DecodeCategorizationData(HairCategorizationTexture.Load(uint3(PixelCoord, 0)));
+	bTraceHairRay = false;
 	HairDeviceZ = 0;
-	if (HairSampleDepth > 0)
+	if (Categorization.PixelCoverage > 0)
 	{
 		const uint HairLightChannel = HairLightChannelMaskTexture.Load(uint3(PixelCoord, 0));
-		HairDeviceZ = HairSampleDepth;
+		HairDeviceZ = Categorization.ClosestDepth;
 		bTraceHairRay = (HairLightChannel & LightingChannelMask) != 0;
 	}
-
-	return bTraceHairRay;
 }
 #endif
 
 bool GenerateOcclusionRay(
 	FLightShaderParameters LightParameters,
-	float3 TranslatedWorldPosition,
+	float3 WorldPosition,
 	float3 WorldNormal,
 	float2 RandSample,
 	out float3 RayOrigin,
@@ -93,31 +87,33 @@ bool GenerateOcclusionRay(
 	{
 		GenerateDirectionalLightOcclusionRay(
 			LightParameters,
-			TranslatedWorldPosition, WorldNormal,
+			WorldPosition, WorldNormal,
 			RandSample,
 			/* out */ RayOrigin,
 			/* out */ RayDirection,
 			/* out */ RayTMin,
 			/* out */ RayTMax);
 	}
-	#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+	#elif LIGHT_TYPE == LIGHT_TYPE_POINT
 	{
-		#if LIGHT_TYPE == LIGHT_TYPE_SPOT
-			// before generating a shadow ray, make sure we are inside the cone of the light
-			float3 LightDirection = normalize(LightParameters.TranslatedWorldPosition - TranslatedWorldPosition);
-			float CosAngle = LightParameters.SpotAngles.x;
-			if (!(dot(LightDirection, LightParameters.Direction) >= CosAngle))
-			{
-				// outside the cone of the light, skip all work
-				return false;
-			}
-		#endif
-		float RayPdf;
-		if (LightParameters.SourceLength > 0.0)
+		if (LightParameters.SourceRadius == 0)
 		{
-			return GenerateCapsuleLightOcclusionRayWithSolidAngleSampling(
+			return GeneratePointLightOcclusionRay(
 				LightParameters,
-				TranslatedWorldPosition, WorldNormal,
+				WorldPosition, WorldNormal,
+				RandSample,
+				/* out */ RayOrigin,
+				/* out */ RayDirection,
+				/* out */ RayTMin,
+				/* out */ RayTMax);
+		}
+		else
+		{
+			float RayPdf;
+			//return GenerateSphereLightOcclusionRayWithAreaSampling(
+			return GenerateSphereLightOcclusionRayWithSolidAngleSampling(
+				LightParameters,
+				WorldPosition, WorldNormal,
 				RandSample,
 				/* out */ RayOrigin,
 				/* out */ RayDirection,
@@ -125,22 +121,24 @@ bool GenerateOcclusionRay(
 				/* out */ RayTMax,
 				/* out */ RayPdf);
 		}
-		return GenerateSphereLightOcclusionRayWithSolidAngleSampling(
+	}
+	#elif LIGHT_TYPE == LIGHT_TYPE_SPOT
+	{
+		return GenerateSpotLightOcclusionRay(
 			LightParameters,
-			TranslatedWorldPosition, WorldNormal,
+			WorldPosition, WorldNormal,
 			RandSample,
 			/* out */ RayOrigin,
 			/* out */ RayDirection,
 			/* out */ RayTMin,
-			/* out */ RayTMax,
-			/* out */ RayPdf);
+			/* out */ RayTMax);
 	}
 	#elif LIGHT_TYPE == LIGHT_TYPE_RECT
 	{
 		float RayPdf = 0.0;
 		return GenerateRectLightOcclusionRay(
 			LightParameters,
-			TranslatedWorldPosition, WorldNormal,
+			WorldPosition, WorldNormal,
 			RandSample,
 			/* out */ RayOrigin,
 			/* out */ RayDirection,
@@ -178,7 +176,7 @@ float ComputeDiffuseTransmission(
 	float TMax = TransmissionDistance;
 	if (bTransmissionSamplingDistanceCulling)
 	{
-		FRayDesc RejectionTestRay;
+		RayDesc RejectionTestRay;
 		RejectionTestRay.Origin = P;
 		RejectionTestRay.Direction = Tr;
 		RejectionTestRay.TMin = 0.01;
@@ -188,6 +186,7 @@ float ComputeDiffuseTransmission(
 			TLAS,
 			RayFlags,
 			InstanceInclusionMask,
+			PixelCoord,
 			RejectionTestRay);
 		TMax = (RejectionTestPayload.IsHit() ? RejectionTestPayload.HitT : RejectionTestRay.TMax);
 		if (RejectionTestPayload.IsMiss())
@@ -227,14 +226,9 @@ float ComputeDiffuseTransmission(
 	ScatterDistance /= ScatterDistancePdf;
 
 	// Build sub-surface scattering ray
-	FRayDesc SSSRay;
+	RayDesc SSSRay;
 	SSSRay.Origin = P + Tr * ScatterDistance;
-	bool bIsValidRay = GenerateOcclusionRay(LightParameters, SSSRay.Origin, N, LightSample, SSSRay.Origin, SSSRay.Direction, SSSRay.TMin, SSSRay.TMax);
-
-	if (!bIsValidRay)
-	{
-		return TransmissionDistance;
-	}
+	GenerateOcclusionRay(LightParameters, SSSRay.Origin, N, LightSample, SSSRay.Origin, SSSRay.Direction, SSSRay.TMin, SSSRay.TMax);
 
 	// Clip the ray length by the maximum transmission distance
 	float LightTMax = SSSRay.TMax;
@@ -244,6 +238,7 @@ float ComputeDiffuseTransmission(
 		TLAS,
 		RayFlags,
 		InstanceInclusionMask,
+		PixelCoord,
 		SSSRay);
 
 	if (SSSPayload.IsHit())
@@ -255,6 +250,7 @@ float ComputeDiffuseTransmission(
 			TLAS,
 			RayFlags,
 			InstanceInclusionMask,
+			PixelCoord,
 			SSSRay);
 		if (VisibilityPayload.IsMiss())
 		{
@@ -294,9 +290,9 @@ float OcclusionToShadow(FOcclusionResult In, uint LocalSamplesPerPixel)
 	return (LocalSamplesPerPixel > 0) ? In.Visibility / LocalSamplesPerPixel : In.Visibility;
 }
 
-FRayDesc Invert(in FRayDesc Ray)
+RayDesc Invert(in RayDesc Ray)
 {
-	FRayDesc InvertedRay;
+	RayDesc InvertedRay;
 	InvertedRay.TMin = Ray.TMin;
 	InvertedRay.TMax = Ray.TMax;
 #if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
@@ -308,29 +304,19 @@ FRayDesc Invert(in FRayDesc Ray)
 	return InvertedRay;
 }
 
-struct FOcclusionShadingParameters
-{
-	bool bIsValid;
-	bool bBackfaceCulling;
-	bool bIsHair;
-	bool bIsHairStrands;
-	bool bIsSubsurface;
-	bool bHasSubsurfaceProfile;
-};
-
 FOcclusionResult ComputeOcclusion(
 	const uint2 PixelCoord,
+	const uint ShadingModelID,
 	const uint RaytracingMask,
 	const float DeviceZ,
 	float3 WorldNormal,
-	const FOcclusionShadingParameters ShadingDesc,
 	const FLightShaderParameters LightParameters,
 	const FTransmissionProfileParams TransmissionProfileParams,
 	const uint LocalSamplesPerPixel)
 {
 	FOcclusionResult Out = InitOcclusionResult();
 
-	const float3 TranslatedWorldPosition = ReconstructTranslatedWorldPositionFromDeviceZ(PixelCoord, DeviceZ);
+	const float3 WorldPosition = ReconstructWorldPositionFromDeviceZ(PixelCoord, DeviceZ);
 
 	// For hair shading model, WorldNormal is actually the shading tangent.
 	// To generate proper bias, we compute a normal oriented toward the light.
@@ -344,17 +330,21 @@ FOcclusionResult ComputeOcclusion(
 	// toward the view point (this create issue for transmitted light)
 	// It seems having proper transmission is more important, thus the light 
 	// version is enabled by default
-	if (ShadingDesc.bIsHair || ShadingDesc.bIsHairStrands)
+	bool bApplyNormalCulling = true;
+	if (ShadingModelID == SHADINGMODELID_HAIR)
 	{
 	#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
 		const float3 LightDirection = LightParameters.Direction;
 	#else
-		const float3 LightDirection = normalize(LightParameters.TranslatedWorldPosition - TranslatedWorldPosition);
+		const float3 LightDirection = normalize(LightParameters.Position - WorldPosition);
 	#endif
 		WorldNormal = LightDirection;
+		bApplyNormalCulling = false;
 	}
-
-	bool bApplyNormalCulling = ShadingDesc.bBackfaceCulling;
+	else if (ShadingModelID == SHADINGMODELID_EYE || ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE || ShadingModelID == SHADINGMODELID_SUBSURFACE)
+	{
+		bApplyNormalCulling = false;
+	}
 
 	// Disable normal culling for RectLights
 	if (LIGHT_TYPE == LIGHT_TYPE_RECT)
@@ -380,10 +370,10 @@ FOcclusionResult ComputeOcclusion(
 
 		float2 RandSample = RandomSequence_GenerateSample2D(RandSequence);
 
-		FRayDesc Ray = (FRayDesc)0;
+		RayDesc Ray;
 		bool bIsValidRay = GenerateOcclusionRay(
 			LightParameters,
-			TranslatedWorldPosition, WorldNormal,
+			WorldPosition, WorldNormal,
 			RandSample,
 			/* out */ Ray.Origin,
 			/* out */ Ray.Direction,
@@ -431,14 +421,12 @@ FOcclusionResult ComputeOcclusion(
 
 		uint RayFlags = 0;
 
-		// Enable back face culling if not used two-sided shadow casting mode.
-		if (bTwoSidedGeometry != 1)
-		{
-			RayFlags |= RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
-		}
+	#if !ENABLE_TWO_SIDED_GEOMETRY
+		RayFlags |= RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+	#endif
 
 	#if USE_HAIR_LIGHTING
-		if (ShadingDesc.bIsHairStrands)
+		if (ShadingModelID == SHADINGMODELID_HAIR)
 		{
 			// Denoiser mode 0 doesn't use depth, so take first hit
 			RayFlags |= RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH;
@@ -447,43 +435,15 @@ FOcclusionResult ComputeOcclusion(
 
 		uint RayFlagsForOpaque = bAcceptFirstHit != 0 ? RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH : 0;
 
-		FMinimalPayload MinimalPayload;
-
-#if AVOID_SELF_INTERSECTION_TRACE
-		{
-			FRayDesc EpsilonRay = Ray;
-			EpsilonRay.TMax = AvoidSelfIntersectionTraceDistance;
-
-			if (Ray.TMax > Ray.TMin)
-			{
-				MinimalPayload = TraceVisibilityRay(
-					TLAS,
-					RayFlags | RayFlagsForOpaque | RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
-					RaytracingMask,
-					EpsilonRay);
-			}
-		}
-
-		if (!MinimalPayload.IsHit())
-		{
-			Ray.TMin = max(Ray.TMin, AvoidSelfIntersectionTraceDistance);
-
-			MinimalPayload = TraceVisibilityRay(
-				TLAS,
-				RayFlags | RayFlagsForOpaque,
-				RaytracingMask,
-				Ray);
-		}
-#else
-		MinimalPayload = TraceVisibilityRay(
+		FMinimalPayload MinimalPayload = TraceVisibilityRay(
 			TLAS,
 			RayFlags | RayFlagsForOpaque,
 			RaytracingMask,
+			PixelCoord,
 			Ray);
-#endif
 
 		#if USE_HAIR_LIGHTING
-		if (!ShadingDesc.bIsHairStrands && bUseHairVoxel)
+		if (ShadingModelID != SHADINGMODELID_HAIR && bUseHairVoxel)
 		{
 			MinimalPayload.HitT = TraverseHair(PixelCoord, RandSequence, Ray.Origin, Ray.Direction, MinimalPayload.HitT, VirtualVoxel.Raytracing_ShadowOcclusionThreshold);
 		}
@@ -500,14 +460,15 @@ FOcclusionResult ComputeOcclusion(
 			Out.SumRayDistance += HitT;
 			Out.HitCount += 1.0;
 
-			if (ShadingDesc.bIsSubsurface || ShadingDesc.bIsHair)
+			if (ShadingModelID == SHADINGMODELID_SUBSURFACE || ShadingModelID == SHADINGMODELID_HAIR)
 			{
 				// Reverse the ray to support sub-surface casts
-				FRayDesc InvertedRay = Invert(Ray);
+				RayDesc InvertedRay = Invert(Ray);
 				FMinimalPayload SubsurfacePayload = TraceVisibilityRay(
 					TLAS,
 					RayFlags,
 					RaytracingMask,
+					PixelCoord,
 					InvertedRay);
 
 				if (SubsurfacePayload.IsHit())
@@ -516,13 +477,13 @@ FOcclusionResult ComputeOcclusion(
 					float3 HitPosition = InvertedRay.Origin + InvertedRay.Direction * SubsurfacePayload.HitT;
 					float Opacity = TransmissionProfileParams.ExtinctionScale;
 					float Density = -.05f * log(1 - min(Opacity, .999f));
-					if (ShadingDesc.bIsHair)
+					if (ShadingModelID == SHADINGMODELID_HAIR)
 					{
 						Opacity = 1;
 						Density = 1;
 					}
 					float ExtinctionCoefficient = Density;
-					float Thickness = length(HitPosition - TranslatedWorldPosition);
+					float Thickness = length(HitPosition - WorldPosition);
 					float Transmission = saturate(exp(-ExtinctionCoefficient * Thickness));
 
 					if (Transmission == 1.0)
@@ -549,20 +510,19 @@ FOcclusionResult ComputeOcclusion(
 	while (0);
 #endif // ENABLE_MULTIPLE_SAMPLES_PER_PIXEL
 
-	if (ENABLE_TRANSMISSION && LocalSamplesPerPixel > 0 && ShadingDesc.bHasSubsurfaceProfile)
+	if (ENABLE_TRANSMISSION && LocalSamplesPerPixel > 0 && ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE)
 	{
 		RandomSequence RandSequence;
 		RandomSequence_Initialize(RandSequence, PixelCoord, 0, TimeSeed, 1);
 
 		// Fix light sampling to occur at the light center for all transmission computations..
 		float2 LightSample = 0.5;
-		const float3 TranslatedWorldViewOrigin = LWCToFloat(LWCAdd(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation));
-		const float3 V = normalize(TranslatedWorldPosition - TranslatedWorldViewOrigin);
+		const float3 V = normalize(WorldPosition - View.WorldViewOrigin);
 
 		const float MeanFreePath = TransmissionProfileParams.ExtinctionScale;
 		const float Eta = TransmissionProfileParams.OneOverIOR;
 		const uint RejectionRetryMax = LocalSamplesPerPixel - 1;
-		Out.TransmissionDistance = ComputeDiffuseTransmission(V, TranslatedWorldPosition, WorldNormal, MeanFreePath, Eta, LightParameters, LightSample, RandSequence, RejectionRetryMax, PixelCoord);
+		Out.TransmissionDistance = ComputeDiffuseTransmission(V, WorldPosition, WorldNormal, MeanFreePath, Eta, LightParameters, LightSample, RandSequence, RejectionRetryMax, PixelCoord);
 
 		// Overload closest-hit distance to express occlusion distance when facing the light or transmission distance when back-facing
 		if (Out.TransmissionDistance < SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE)
@@ -573,9 +533,9 @@ FOcclusionResult ComputeOcclusion(
 		// Conversion to raster model: 1.0 - (distance / SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE)
 		Out.TransmissionDistance = saturate(EncodeThickness(Out.TransmissionDistance / (SSSS_MAX_TRANSMISSION_PROFILE_DISTANCE)));
 	}
-	else if (ShadingDesc.bIsSubsurface || ShadingDesc.bIsHair)
+	else if (ShadingModelID == SHADINGMODELID_SUBSURFACE || ShadingModelID == SHADINGMODELID_HAIR)
 	{
-		float Depth = length(TranslatedWorldPosition - View.TranslatedWorldCameraOrigin);
+		float Depth = length(WorldPosition - View.WorldCameraOrigin);
 		float Range = LODTransitionEnd - LODTransitionStart;
 		if (Depth > LODTransitionStart && Range > 0.0)
 		{
@@ -584,7 +544,7 @@ FOcclusionResult ComputeOcclusion(
 		}
 		Out.TransmissionDistance = (LocalSamplesPerPixel > 0) ? Out.TransmissionDistance / LocalSamplesPerPixel : Out.TransmissionDistance;
 	}
-	else // Eye/Foliage (SHADINGMODELID_EYE, SHADINGMODELID_TWOSIDED_FOLIAGE)
+	else // if ((ShadingModelID == SHADINGMODELID_EYE) || (ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE))
 	{
 		Out.TransmissionDistance = (LocalSamplesPerPixel > 0) ? Out.Visibility / LocalSamplesPerPixel : Out.Visibility;
 	}
@@ -593,7 +553,7 @@ FOcclusionResult ComputeOcclusion(
 
 RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 {
-	const uint2 PixelCoord = DispatchRaysIndex().xy + View.ViewRectMin.xy + PixelOffset;
+	uint2 PixelCoord = DispatchRaysIndex().xy + View.ViewRectMin.xy + PixelOffset;
 
 	FOcclusionResult Occlusion = InitOcclusionResult();
 	FOcclusionResult HairOcclusion = InitOcclusionResult();
@@ -609,68 +569,42 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 
 		FLightShaderParameters LightParameters = GetRootLightShaderParameters();
 
-		// Read material data
+		// Get G-Buffer surface data
+		float2 InvBufferSize = View.BufferSizeAndInvSize.zw;
+		float2 BufferUV = (float2(PixelCoord) + 0.5) * InvBufferSize;
 		float3 WorldNormal = 0;
-		FOcclusionShadingParameters ShadingParameters = (FOcclusionShadingParameters)0;
-		FTransmissionProfileParams TransmissionParameters = (FTransmissionProfileParams)0;
-		#if STRATA_ENABLED
+		uint ShadingModelID = SHADINGMODELID_UNLIT;
+		FTransmissionProfileParams TransmissionProfileParams = (FTransmissionProfileParams)0;
 		{
-			FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelCoord, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-			const FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-			const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
-
-			const FStrataSubsurfaceHeader SSSHeader = StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelCoord);
-			const bool bSSSIsValid = StrataSubSurfaceHeaderGetUseDiffusion(SSSHeader);
-			const bool bSSSIsProfile = StrataSubSurfaceHeaderGetIsProfile(SSSHeader);
-
-			ShadingParameters.bIsValid = IsStrataMaterial(StrataPixelHeader);
-			ShadingParameters.bIsHair = StrataGetBSDFType(StrataPixelHeader) == STRATA_BSDF_TYPE_HAIR;
-			ShadingParameters.bIsSubsurface = bSSSIsValid && !bSSSIsProfile;
-			ShadingParameters.bHasSubsurfaceProfile = bSSSIsValid && bSSSIsProfile;
-			ShadingParameters.bBackfaceCulling = any(StrataSubSurfaceHeaderGetMFP(SSSHeader) > 0); // STRATA_TODO
-
-			WorldNormal = TopLayerData.WorldNormal;
-
-			if (ENABLE_TRANSMISSION && ShadingParameters.bHasSubsurfaceProfile)
-			{
-				TransmissionParameters = GetTransmissionProfileParams(StrataSubSurfaceHeaderGetProfileId(SSSHeader));
-			}
-
-			if (ShadingParameters.bIsSubsurface)
-			{
-				TransmissionParameters.ExtinctionScale = StrataGetOpacityFromSubSurface(SSSHeader);
-			}
-		}	
-		#else
-		{
+#if 0
+			FGBufferData GBufferData = GetGBufferDataFromSceneTextures(UV);
+#else
+			//#dxr-todo: workaround for flickering. UE-87281
 			FGBufferData GBufferData = GetGBufferDataFromSceneTexturesLoad(PixelCoord);
-			ShadingParameters.bIsValid = GBufferData.ShadingModelID != SHADINGMODELID_UNLIT;
-			ShadingParameters.bIsHair = GBufferData.ShadingModelID == SHADINGMODELID_HAIR;
-			ShadingParameters.bIsSubsurface = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE;
-			ShadingParameters.bHasSubsurfaceProfile = GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE;
-			ShadingParameters.bBackfaceCulling =
-				GBufferData.ShadingModelID == SHADINGMODELID_EYE ||
-				GBufferData.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE ||
-				GBufferData.ShadingModelID == SHADINGMODELID_SUBSURFACE;
-
-			WorldNormal	= GBufferData.WorldNormal;
-
+#endif
+			ShadingModelID = GBufferData.ShadingModelID;
+			WorldNormal = GBufferData.WorldNormal;
 			if (ENABLE_TRANSMISSION)
 			{
-				TransmissionParameters = GetTransmissionProfileParams(ExtractSubsurfaceProfileInt(GBufferData));
+				TransmissionProfileParams = GetTransmissionProfileParams(GBufferData);
 			}
 
-			if (ShadingParameters.bIsSubsurface)
+			if (ShadingModelID == SHADINGMODELID_SUBSURFACE)
 			{
-				TransmissionParameters.ExtinctionScale = GBufferData.CustomData.a;
+				TransmissionProfileParams.ExtinctionScale = GBufferData.CustomData.a;
 			}
 		}
-		#endif
 
 		// Mask out depth values that are infinitely far away
+
+#if 0
+		float DeviceZ = SceneDepthTexture.SampleLevel(SceneDepthTextureSampler, BufferUV, 0).r;
+#else
+		//#dxr-todo: workaround for flickering. UE-87281
 		float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
+#endif
 		const bool bIsDepthValid = SceneDepthTexture.Load(int3(PixelCoord, 0)).r > 0.0;
-		const bool bIsValidPixel = ShadingParameters.bIsValid && bIsDepthValid;
+		const bool bIsValidPixel = ShadingModelID != SHADINGMODELID_UNLIT && bIsDepthValid;
 		const uint LightChannel = GetSceneLightingChannel(PixelCoord);
 		const bool bTraceRay = bIsValidPixel && (LightChannel & LightingChannelMask) != 0;
 		if (!bTraceRay)
@@ -678,33 +612,33 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 			LocalSamplesPerPixel = 0;
 		}
 
+	#if USE_HAIR_LIGHTING
+		bool bTraceHairRay = false;
+		float HairDeviceZ = 0;
+		NeedTraceHair(PixelCoord, bTraceHairRay, HairDeviceZ);
+	#endif
+
 		Occlusion = ComputeOcclusion(
 			PixelCoord,
+			ShadingModelID,
 			RAY_TRACING_MASK_SHADOW | RAY_TRACING_MASK_THIN_SHADOW,
 			DeviceZ,
 			WorldNormal,
-			ShadingParameters,
 			LightParameters, 
-			TransmissionParameters,
+			TransmissionProfileParams,
 			LocalSamplesPerPixel);
 
 		#if USE_HAIR_LIGHTING
-		float HairDeviceZ = 0;
-		if (NeedTraceHair(PixelCoord, HairDeviceZ))
+		if (bTraceHairRay)
 		{
-			FTransmissionProfileParams HairTransmissionParameters = (FTransmissionProfileParams)0;
-			FOcclusionShadingParameters HairOcclusionShadingParameters = (FOcclusionShadingParameters)0;
-			HairOcclusionShadingParameters.bIsValid = true;
-			HairOcclusionShadingParameters.bIsHairStrands = true;
-
 			HairOcclusion = ComputeOcclusion(
 				PixelCoord,
+				SHADINGMODELID_HAIR,
 				RAY_TRACING_MASK_SHADOW,
 				HairDeviceZ,
 				float3(1,0,0),
-				HairOcclusionShadingParameters,
 				LightParameters,
-				HairTransmissionParameters,
+				TransmissionProfileParams,
 				RequestedSamplePerPixel);
 		}
 		#endif
@@ -715,7 +649,7 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 	{
 		// the channel assignment is documented in ShadowRendering.cpp (look for Light Attenuation channel assignment)
 		const float HairShadow = OcclusionToShadow(HairOcclusion, RequestedSamplePerPixel);
-		const float FadedShadow = HairShadow;
+		const float FadedShadow = Square(HairShadow);
 		const float4 OutColor = EncodeLightAttenuation(FadedShadow.xxxx);
 		RWSubPixelOcclusionMaskUAV[PixelCoord] = OutColor;
 	}
@@ -755,8 +689,8 @@ RAY_TRACING_ENTRY_RAYGEN(OcclusionRGS)
 
 		// 0 is shadowed, 1 is unshadowed
 		// RETURN_COLOR not needed unless writing to SceneColor;
-		float FadedShadow = lerp(1.0f, Shadow, ShadowFadeFraction);
-		float FadedSSSShadow = lerp(1.0f, SSSTransmission, ShadowFadeFraction);
+		float FadedShadow = lerp(1.0f, Square(Shadow), ShadowFadeFraction);
+		float FadedSSSShadow = lerp(1.0f, Square(SSSTransmission), ShadowFadeFraction);
 
 		// the channel assignment is documented in ShadowRendering.cpp (look for Light Attenuation channel assignment)
 		float4 OutColor;

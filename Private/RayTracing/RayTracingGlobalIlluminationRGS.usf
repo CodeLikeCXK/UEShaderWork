@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#define USE_IES_TERM 0 // this shader doesn't bind the IES atlas, so disable the IES term from path tracer lights
+
 #include "../Common.ush"
 #include "../RectLight.ush"
 //#include "../MonteCarlo.ush"
@@ -11,8 +13,11 @@
 #include "RayTracingHitGroupCommon.ush"
 
 #include "../PathTracing/Light/PathTracingLightSampling.ush"
+#include "../PathTracing/Material/PathTracingMaterialSampling.ush"
 #include "../PathTracing/Utilities/PathTracingRandomSequence.ush"
 
+
+#define USE_PATHTRACING_MATERIALS 0
 
 RaytracingAccelerationStructure TLAS;
 RWTexture2D<float4> RWGlobalIlluminationUAV;
@@ -34,7 +39,7 @@ uint RenderTileOffsetX;
 uint RenderTileOffsetY;
 
 void GenerateCosineNormalRay(
-	float3 TranslatedWorldPosition,
+	float3 WorldPosition,
 	float3 WorldNormal,
 	float2 RandSample,
 	out float3 RayOrigin,
@@ -48,7 +53,7 @@ void GenerateCosineNormalRay(
 	float4 Direction_Tangent = CosineSampleHemisphere(RandSample);
 	float3 Direction_World = TangentToWorld(Direction_Tangent.xyz, WorldNormal);
 
-	RayOrigin = TranslatedWorldPosition;
+	RayOrigin = WorldPosition;
 	RayDirection = Direction_World;
 	RayTMin = 0.01;
 	RayTMax = max(MaxRayDistanceForGI, MaxRayDistanceForAO);
@@ -82,9 +87,9 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 		GBufferData.DiffuseColor = GBufferData.StoredBaseColor;
 	}
 	float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
-	float3 TranslatedWorldPosition;
+	float3 WorldPosition;
 	float3 CameraDirection;
-	ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, TranslatedWorldPosition, CameraDirection);
+	ReconstructWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, WorldPosition, CameraDirection);
 	float3 WorldNormal = GBufferData.WorldNormal;
 	uint ShadingModelID = GBufferData.ShadingModelID;
 	if (ShadingModelID == SHADINGMODELID_UNLIT)
@@ -122,10 +127,10 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 		}
 
 		// Initialize ray
-		FRayDesc Ray;
+		RayDesc Ray;
 		float RayPdf = 1.0;
 #if 1
-		GenerateCosineNormalRay(TranslatedWorldPosition, WorldNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		GenerateCosineNormalRay(WorldPosition, WorldNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
 		half3 N = WorldNormal;
 		half3 V = -CameraDirection;
 		half3 L = Ray.Direction;
@@ -136,8 +141,8 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 #else
 		float2 RandSample = RandomSequence_GenerateSample2D(RandSequence);
 		float2 ViewportUV = (PixelCoord.xy + RandSample.xy) * View.BufferSizeAndInvSize.zw;
-		Ray.Origin = ReconstructTranslatedWorldPositionFromDepth(ViewportUV, 0.0f);
-		Ray.Direction = normalize(ReconstructTranslatedWorldPositionFromDepth(ViewportUV, 1.f) - Ray.Origin);
+		Ray.Origin = ReconstructWorldPositionFromDepth(ViewportUV, 0.0f);
+		Ray.Direction = normalize(ReconstructWorldPositionFromDepth(ViewportUV, 1.f) - Ray.Origin);
 		Ray.TMin = 0.0;
 		Ray.TMax = 1.0e12;
 		float3 RayThroughput = 1.0;
@@ -166,6 +171,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 				InstanceInclusionMask,
 				Ray,
 				RayCone,
+				PixelCoord,
 				bEnableSkyLightContribution,
 				bIgnoreTranslucentMaterials);
 
@@ -176,7 +182,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 				if (EvalSkyLight && Bounce > 0)
 				{
 					uint SkyLightId = 0;
-					FRayDesc LightRay = Ray;
+					RayDesc LightRay = Ray;
 					LightRay.TMax = POSITIVE_INFINITY;
 					float3 EnvironmentRadiance = SkyLight_TraceLight(Ray, SkyLightId).Radiance;
 					Irradiance += EnvironmentRadiance * RayThroughput / RayPdf;
@@ -199,7 +205,20 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 			Ray.Origin += Ray.Direction * Payload.HitT;
 
 			// Create faux GBuffer to use with EvaluateBxDF
-			FGBufferData GBufferData = GetGBufferDataFromPayload(Payload);
+			FGBufferData GBufferData = (FGBufferData)0;
+			GBufferData.Depth = 1.f; // Do not use depth
+			GBufferData.WorldNormal = Payload.WorldNormal;
+			GBufferData.BaseColor = Payload.BaseColor;
+			GBufferData.CustomData = Payload.CustomData;
+			GBufferData.GBufferAO = Payload.GBufferAO;
+			GBufferData.IndirectIrradiance = (Payload.IndirectIrradiance.x + Payload.IndirectIrradiance.y + Payload.IndirectIrradiance.z) / 3.f;
+			GBufferData.SpecularColor = Payload.SpecularColor;
+			GBufferData.DiffuseColor = Payload.DiffuseColor;			
+			GBufferData.Metallic = Payload.Metallic;
+			GBufferData.Specular = Payload.Specular;
+			GBufferData.Roughness = Payload.Roughness;
+			GBufferData.ShadingModelID = Payload.ShadingModelID;
+			GBufferData.CustomData = Payload.CustomData;
 
 			// Perform next-event estimation
 			float SplitFactor = 1.0 / NextEventEstimationSamples;
@@ -212,7 +231,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 
 				float3 RandSample3 = RandomSequence_GenerateSample3D(RandSequence);
 
-				FRayDesc LightRay;
+				RayDesc LightRay;
 				if (SampleLight(RandSample3,
 								Ray.Origin,
 								Payload.WorldNormal,
@@ -247,6 +266,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 						TLAS,
 						NeeRayFlags,
 						NeeInstanceInclusionMask,
+						PixelCoord,
 						LightRay);
 
 					// No hit indicates successful next-event connection
@@ -255,7 +275,11 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 						// Evaluate material
 						float3 MaterialThroughput;
 						float MaterialEvalPdf = 0.0;
-
+#if USE_PATHTRACING_MATERIALS
+						float3 MaterialWeight = 0;
+						EvalMaterial(Ray.Direction, LightRay.Direction, Payload, MaterialWeight, MaterialEvalPdf);
+						MaterialThroughput = MaterialWeight * MaterialEvalPdf;
+#else
 						half3 N = Payload.WorldNormal;
 						half3 V = -Ray.Direction;
 						half3 L = LightRay.Direction;
@@ -268,6 +292,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 							MaterialThroughput += LightingSample.Transmission;
 						}
 						MaterialEvalPdf = 1.0;
+#endif
 
 						// Record the contribution
 						float3 ExitantRadianceSample = LightRadianceOverPdf * MaterialThroughput * RayThroughput * SplitFactor / RayPdf;
@@ -278,7 +303,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 							ExitantRadianceSample *= rcp(1.0 + Luminance(ExitantRadianceSample));
 						}
 
-						Irradiance += select(isfinite(ExitantRadianceSample), ExitantRadianceSample, 0.0);
+						Irradiance += isfinite(ExitantRadianceSample) ? ExitantRadianceSample : 0.0;
 					}
 				}
 			}
@@ -288,6 +313,14 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 			{
 				float3 Direction;
 				float3 Throughput = 1.0;
+#if USE_PATHTRACING_MATERIALS
+				RandSample4 = RandomSequence_GenerateSample4D(RandSequence);
+
+				float PositionBiasSign;
+				float3 Weight = 0;
+				SampleMaterial(Ray.Direction, Payload, RandSample, Direction, Weight, MaterialPdf, PositionBiasSign);
+				Throughput = Weight * MaterialPdf;
+#else
 
 				float3 RandSample3 = RandomSequence_GenerateSample3D(RandSequence);
 
@@ -301,7 +334,7 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 				FShadowTerms ShadowTerms = { 0.0, 0.0, 0.0, InitHairTransmittanceData() };
 				FDirectLighting LightingSample = EvaluateBxDF(GBufferData, N, V, L, NoL, ShadowTerms);
 				Throughput = LightingSample.Diffuse;
-
+#endif
 				if (MaterialPdf <= 0.0)
 				{
 					break;
@@ -340,7 +373,9 @@ RAY_TRACING_ENTRY_RAYGEN(GlobalIlluminationRGS)
 
 	AmbientOcclusion = saturate(AmbientOcclusion);
 
+#if USE_PREEXPOSURE
 	Irradiance *= View.PreExposure;
+#endif
 
 	Irradiance = ClampToHalfFloatRange(Irradiance);
 	RWGlobalIlluminationUAV[DispatchThreadId] = float4(Irradiance, AmbientOcclusion);

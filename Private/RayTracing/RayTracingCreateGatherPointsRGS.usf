@@ -9,6 +9,8 @@
 #define DIM_DEFERRED_MATERIAL_MODE DEFERRED_MATERIAL_MODE_NONE
 #endif
 
+#define USE_IES_TERM 0 // this shader doesn't bind the IES atlas, so disable the IES term from path tracer lights
+
 #include "../Common.ush"
 #include "../RectLight.ush"
 #include "../DeferredShadingCommon.ush"
@@ -21,6 +23,7 @@
 #include "RayTracingGatherPoints.ush"
 
 #include "../PathTracing/Light/PathTracingLightSampling.ush"
+#include "../PathTracing/Material/PathTracingMaterialSampling.ush"
 #include "../PathTracing/Utilities/PathTracingRandomSequence.ush"
 
 RaytracingAccelerationStructure TLAS;
@@ -55,7 +58,7 @@ uint DispatchThreadIdToLinearIndex(uint2 DispatchThreadId)
 }
 
 void GenerateUniformRay(
-	float3 TranslatedWorldPosition,
+	float3 WorldPosition,
 	float3 WorldNormal,
 	float2 RandSample,
 	out float3 RayOrigin,
@@ -68,7 +71,7 @@ void GenerateUniformRay(
 	float4 SampleResult = UniformSampleSphere(RandSample);
 	float3 Direction_World = SampleResult.xyz;
 
-	RayOrigin = TranslatedWorldPosition;
+	RayOrigin = WorldPosition;
 	RayDirection = Direction_World;
 	RayTMin = 0.05;
 	RayTMax = MaxRayDistanceForGI;
@@ -76,7 +79,7 @@ void GenerateUniformRay(
 }
 
 void GenerateCosineNormalRay(
-	float3 TranslatedWorldPosition,
+	float3 WorldPosition,
 	float3 WorldNormal,
 	float2 RandSample,
 	out float3 RayOrigin,
@@ -90,7 +93,7 @@ void GenerateCosineNormalRay(
 	float4 Direction_Tangent = CosineSampleHemisphere(RandSample);
 	float3 Direction_World = TangentToWorld(Direction_Tangent.xyz, WorldNormal);
 
-	RayOrigin = TranslatedWorldPosition;
+	RayOrigin = WorldPosition;
 	RayDirection = Direction_World;
 	RayTMin = 0.05;
 	RayTMax = MaxRayDistanceForGI;
@@ -157,9 +160,9 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsTraceRGS)
 
 	// Construct position, normal, and view direction
 	float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
-	float3 TranslatedWorldPosition;
+	float3 WorldPosition;
 	float3 CameraDirection;
-	ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, TranslatedWorldPosition, CameraDirection);
+	ReconstructWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, WorldPosition, CameraDirection);
 	float3 WorldNormal = GBufferData.WorldNormal;
 
 	// Determine blue-noise coordinate, based on the local neighborhood
@@ -174,11 +177,11 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsTraceRGS)
 		float2 RandSample = RandomSequence_GenerateSample2D(RandSequence);
 
 		// Initialize ray
-		FRayDesc Ray;
+		RayDesc Ray;
 		float RayPdf = 1.0;
-		GenerateCosineNormalRay(TranslatedWorldPosition, WorldNormal, RandSample, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
-		//GenerateUniformRay(TranslatedWorldPosition, WorldNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
-		//GenerateCosineNormalRay(TranslatedWorldPosition, SampleCenterNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		GenerateCosineNormalRay(WorldPosition, WorldNormal, RandSample, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		//GenerateUniformRay(WorldPosition, WorldNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		//GenerateCosineNormalRay(WorldPosition, SampleCenterNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
 		ApplyCameraRelativeDepthBias(Ray, PixelCoord, DeviceZ, WorldNormal, MaxNormalBias);
 
 		uint RayFlags = 0;
@@ -194,7 +197,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsTraceRGS)
 			RAY_TRACING_SHADER_SLOT_MATERIAL,	// RayContributionToHitGroupIndex
 			RAY_TRACING_NUM_SHADER_SLOTS,		// MultiplierForGeometryContributionToShaderIndex
 			0,									// MissShaderIndex
-			Ray.GetNativeDesc(),				// RayDesc
+			Ray,								// RayDesc
 			DeferredMaterialPayload
 		);
 	}
@@ -266,9 +269,9 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 
 	// Construct position, normal, and view direction
 	float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
-	float3 TranslatedWorldPosition;
+	float3 WorldPosition;
 	float3 CameraDirection;
-	ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, TranslatedWorldPosition, CameraDirection);
+	ReconstructWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, WorldPosition, CameraDirection);
 	float3 WorldNormal = GBufferData.WorldNormal;
 
 	// Determine blue-noise coordinate, based on the local neighborhood
@@ -287,12 +290,12 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 #if 0
 		// Adaptive rejection optimization
 		{
-			float3 GPTranslatedPositionPosition = RWGatherPointsBuffer[GatherPointsIndex].CreationPoint[SampleIndex];
-			if (length(GPTranslatedPositionPosition - TranslatedWorldPosition) < 10.0) continue;
+			float3 GPPosition = RWGatherPointsBuffer[GatherPointsIndex].CreationPoint[SampleIndex];
+			if (length(GPPosition - WorldPosition) < 10.0) continue;
 		}
 #endif
 		float3 Irradiance = 0;
-		float3 TranslatedPosition = 0;
+		float3 Position = 0;
 		float3 Normal = 0;
 
 		RandomSequence RandSequence;
@@ -300,11 +303,11 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 		float2 RandSample = RandomSequence_GenerateSample2D(RandSequence);
 
 		// Initialize ray
-		FRayDesc Ray;
+		RayDesc Ray;
 		float RayPdf = 1.0;
-		GenerateCosineNormalRay(TranslatedWorldPosition, WorldNormal, RandSample, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
-		//GenerateUniformRay(TranslatedWorldPosition, WorldNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
-		//GenerateCosineNormalRay(TranslatedWorldPosition, SampleCenterNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		GenerateCosineNormalRay(WorldPosition, WorldNormal, RandSample, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		//GenerateUniformRay(WorldPosition, WorldNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
+		//GenerateCosineNormalRay(WorldPosition, SampleCenterNormal, RandSample.yz, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPdf);
 		// Distribution PDF is not used for gather points, only gather queries.
 		ApplyCameraRelativeDepthBias(Ray, PixelCoord, DeviceZ, WorldNormal, MaxNormalBias);
 
@@ -343,6 +346,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 				InstanceInclusionMask,
 				Ray,
 				RayCone,
+				PixelCoord,
 				bEnableSkyLightContribution,
 				bIgnoreTranslucentMaterials);
 
@@ -353,9 +357,22 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 			Ray.Origin += Ray.Direction * Payload.HitT;
 
 			// Create faux GBuffer to use with EvaluateBxDF
-			FGBufferData GBufferData = GetGBufferDataFromPayload(Payload);
+			FGBufferData GBufferData = (FGBufferData)0;
+			GBufferData.Depth = 1.f; // Do not use depth
+			GBufferData.WorldNormal = Payload.WorldNormal;
+			GBufferData.BaseColor = Payload.BaseColor;
+			GBufferData.CustomData = Payload.CustomData;
+			GBufferData.GBufferAO = Payload.GBufferAO;
+			GBufferData.IndirectIrradiance = (Payload.IndirectIrradiance.x + Payload.IndirectIrradiance.y + Payload.IndirectIrradiance.z) / 3.f;
+			GBufferData.SpecularColor = Payload.SpecularColor;
+			GBufferData.DiffuseColor = Payload.DiffuseColor;
+			GBufferData.Metallic = Payload.Metallic;
+			GBufferData.Specular = Payload.Specular;
+			GBufferData.Roughness = Payload.Roughness;
+			GBufferData.ShadingModelID = Payload.ShadingModelID;
+			GBufferData.CustomData = Payload.CustomData;
 
-			TranslatedPosition = Ray.Origin;
+			Position = Ray.Origin;
 			Normal = Payload.WorldNormal;
 
 			// Perform next-event estimation
@@ -369,9 +386,9 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 
 				float3 RandSample3 = RandomSequence_GenerateSample3D(RandSequence);
 
-				FRayDesc LightRay;
+				RayDesc LightRay;
 				if (SampleLight(RandSample3,
-								TranslatedPosition,
+								Position,
 								Normal,
 								Payload.PrimitiveLightingChannelMask,
 								ENABLE_TRANSMISSION,
@@ -381,7 +398,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 								LightRadianceOverPdf,
 								NeePdf))
 				{
-					LightRay.Origin = TranslatedPosition;
+					LightRay.Origin = Position;
 					LightRay.TMin = 0;
 					LightRay.TMax = min(LightRay.TMax, MaxShadowDistance);
 					bool bTransmission = HasTransmission(LightId);
@@ -404,6 +421,7 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 						TLAS,
 						NeeRayFlags,
 						NeeInstanceInclusionMask,
+						PixelCoord,
 						LightRay);
 
 					// No hit indicates successful next-event connection
@@ -424,15 +442,15 @@ RAY_TRACING_ENTRY_RAYGEN(RayTracingCreateGatherPointsRGS)
 
 						// Record the contribution
 						float3 ExitantRadianceSample = LightRadianceOverPdf * MaterialThroughput * SplitFactor;
-						Irradiance += select(isfinite(ExitantRadianceSample), ExitantRadianceSample, 0.0);
+						Irradiance += isfinite(ExitantRadianceSample) ? ExitantRadianceSample : 0.0;
 					}
 				}
 			}
 		}
 
 		FGatherSample GatherSample = (FGatherSample)0.0;
-		GatherSample.TranslatedCreationPoint = TranslatedWorldPosition;
-		GatherSample.TranslatedPosition = TranslatedPosition;
+		GatherSample.CreationPoint = WorldPosition;
+		GatherSample.Position = Position;
 		GatherSample.Irradiance = Irradiance;
 		GatherSample.Pdf = RayPdf;
 

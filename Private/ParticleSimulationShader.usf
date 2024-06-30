@@ -8,7 +8,7 @@
 #include "SceneTexturesCommon.ush"
 
 #if DISTANCE_FIELD_COLLISION
-	#include "DistanceField/GlobalDistanceFieldShared.ush"
+	#include "GlobalDistanceFieldShared.ush"
 #endif
 
 #define IMPROVED_DEPTH_BUFFER_COLLISION 1
@@ -103,8 +103,6 @@ float2 LocalToWorldScale;
 float DeltaSeconds;
 /** Number of iterations, each applying DeltaSeconds. */ 
 int	NumIterations;
-/** LWC tile offset, will be 0,0,0 for localspace emitters. */
-float3 LWCTile;
 
 /** Texture from which to read particle position. */
 Texture2D PositionTexture;
@@ -124,20 +122,32 @@ SamplerState CurveTextureSampler;
 #if MAX_VECTOR_FIELDS != 4 && MAX_VECTOR_FIELDS != 1
 #error This must match MAX_VECTOR_FIELDS in C++ land
 #endif
-Texture3D VectorFieldTextures_0;
+Texture3D VectorFieldTextures0;
 
 #if MAX_VECTOR_FIELDS > 1
-Texture3D VectorFieldTextures_1;
-Texture3D VectorFieldTextures_2;
-Texture3D VectorFieldTextures_3;
+Texture3D VectorFieldTextures1;
+Texture3D VectorFieldTextures2;
+Texture3D VectorFieldTextures3;
 #endif
+//Texture3D VectorFieldTextures4;
+//Texture3D VectorFieldTextures5;
+//Texture3D VectorFieldTextures6;
+//Texture3D VectorFieldTextures7;
+//Texture3D VectorFieldTextures8;
+//Texture3D VectorFieldTextures9;
 
-SamplerState VectorFieldTexturesSampler_0;
+SamplerState VectorFieldTexturesSampler0;
 #if MAX_VECTOR_FIELDS > 1
-SamplerState VectorFieldTexturesSampler_1;
-SamplerState VectorFieldTexturesSampler_2;
-SamplerState VectorFieldTexturesSampler_3;
+SamplerState VectorFieldTexturesSampler1;
+SamplerState VectorFieldTexturesSampler2;
+SamplerState VectorFieldTexturesSampler3;
 #endif
+//SamplerState VectorFieldTexturesSampler4;
+//SamplerState VectorFieldTexturesSampler5;
+//SamplerState VectorFieldTexturesSampler6;
+//SamplerState VectorFieldTexturesSampler7;
+//SamplerState VectorFieldTexturesSampler8;
+//SamplerState VectorFieldTexturesSampler9;
 
 /**
  * Computes the orbit velocity to apply to the particle based on time.
@@ -170,13 +180,22 @@ float3 ComputeOrbitVelocity(float Time, float RandomOrbit)
  float3 SampleVectorFieldTexture(int Index, float3 UV)
  {
 #if MAX_VECTOR_FIELDS == 1
-	 return Texture3DSample(VectorFieldTextures_0, VectorFieldTexturesSampler_0, UV).xyz;
+	 return Texture3DSample(VectorFieldTextures0, VectorFieldTexturesSampler0, UV).xyz;
 #else
-	if (Index == 0) return Texture3DSample(VectorFieldTextures_0, VectorFieldTexturesSampler_0, UV).xyz;
-	if (Index == 1) return Texture3DSample(VectorFieldTextures_1, VectorFieldTexturesSampler_1, UV).xyz;
-	if (Index == 2) return Texture3DSample(VectorFieldTextures_2, VectorFieldTexturesSampler_2, UV).xyz;
-	return Texture3DSample(VectorFieldTextures_3, VectorFieldTexturesSampler_3, UV).xyz;
+	if (Index == 0) return Texture3DSample(VectorFieldTextures0, VectorFieldTexturesSampler0, UV).xyz;
+	if (Index == 1) return Texture3DSample(VectorFieldTextures1, VectorFieldTexturesSampler1, UV).xyz;
+	if (Index == 2) return Texture3DSample(VectorFieldTextures2, VectorFieldTexturesSampler2, UV).xyz;
+	return Texture3DSample(VectorFieldTextures3, VectorFieldTexturesSampler3, UV).xyz;
 #endif
+
+//	if (Index == 3) return Texture3DSample(VectorFieldTextures3, VectorFieldTexturesSampler3, UV).xyz;
+//	if (Index == 4) return Texture3DSample(VectorFieldTextures4, VectorFieldTexturesSampler4, UV).xyz;
+//	if (Index == 5) return Texture3DSample(VectorFieldTextures5, VectorFieldTexturesSampler5, UV).xyz;
+//	if (Index == 6) return Texture3DSample(VectorFieldTextures6, VectorFieldTexturesSampler6, UV).xyz;
+//	if (Index == 7) return Texture3DSample(VectorFieldTextures7, VectorFieldTexturesSampler7, UV).xyz;
+//	if (Index == 8) return Texture3DSample(VectorFieldTextures8, VectorFieldTexturesSampler8, UV).xyz;
+//	
+//	return Texture3DSample(VectorFieldTextures9, VectorFieldTexturesSampler9, UV).xyz;
  }
 
 /**
@@ -262,9 +281,9 @@ SamplerState RenderAttributesTextureSampler;
 float CollisionDepthBounds;
 
 /** TODO: Should be moved to Common.usf and used globaly. */
-float3 TranslatedWorldPositionFromSceneDepth(float2 ScreenPosition, float SceneDepth)
+float3 WorldPositionFromSceneDepth(float2 ScreenPosition, float SceneDepth)
 {
-	float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), View.ScreenToWorld).xyz;
 	return WorldPosition;
 }
 
@@ -308,29 +327,27 @@ float3 ComputeCollidingVelocity(
  * Compute collision with the depth buffer.
  */
 void CollideWithDepthBuffer(
-	out FLWCVector3 NewPosition_LWC,
+	out float3 NewPosition,
 	out float3 NewVelocity,
 	inout float RelativeTime,
-	in FLWCVector3 InPosition_LWC,
+	in float3 InPosition,
 	in float3 InVelocity,
 	in float3 Acceleration,
 	in float CollisionRadius,
 	in float Resilience
 	)
 {
-	float3 InPosition = LWCToFloat(LWCAdd(InPosition_LWC, PrimaryView.PreViewTranslation));
-
 	// Integration assuming no collision.
 	float3 MidVelocity = InVelocity.xyz + 0.5f * Acceleration;
 	float3 DeltaPosition = DeltaSeconds * MidVelocity;
-	float3 NewPosition = InPosition.xyz + DeltaPosition;
+	NewPosition = InPosition.xyz + DeltaPosition;
 	NewVelocity = InVelocity.xyz + Acceleration;
 
 	// Figure out where to sample the depth buffer.
 	float3 CollisionOffset = normalize(DeltaPosition) * CollisionRadius;
 
 	float3 CollisionPosition = InPosition + CollisionOffset;
-	float4 SamplePosition = float4(CollisionPosition, 1);
+	float4 SamplePosition = float4(CollisionPosition + View.PreViewTranslation,1);
 	float4 ClipPosition = mul(SamplePosition, View.TranslatedWorldToClip);
 	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
 
@@ -351,22 +368,21 @@ void CollideWithDepthBuffer(
 			// in the view frustum. To avoid this, we disable the collision test if one of the derivate is above a threshold.
 			if (max(abs(SceneDepth - SceneDepth0), abs(SceneDepth - SceneDepth1)) > CollisionDepthBounds)
 			{
-				NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.PreViewTranslation);
 				return;
 			}
 #endif
 			// Reconstruct world position.
-			float3 WorldPosition = TranslatedWorldPositionFromSceneDepth(ScreenPosition.xy, SceneDepth);
+			float3 WorldPosition = WorldPositionFromSceneDepth(ScreenPosition.xy, SceneDepth);
 			
 #if FORWARD_SHADING_NORMAL_CALC && FORWARD_SHADING_ACCURATE_NORMAL
 			// Compute normal using the two additional neighbooring pixel depth buffer fetches.
-			float3 WorldPosition0 = TranslatedWorldPositionFromSceneDepth(ScreenPosition.xy + float2(2 * View.ViewSizeAndInvSize.z, 0.0), SceneDepth0);
-			float3 WorldPosition1 = TranslatedWorldPositionFromSceneDepth(ScreenPosition.xy - float2(0.0, 2 * View.ViewSizeAndInvSize.w), SceneDepth1);
+			float3 WorldPosition0 = WorldPositionFromSceneDepth(ScreenPosition.xy + float2(2 * View.ViewSizeAndInvSize.z, 0.0), SceneDepth0);
+			float3 WorldPosition1 = WorldPositionFromSceneDepth(ScreenPosition.xy - float2(0.0, 2 * View.ViewSizeAndInvSize.w), SceneDepth1);
 			float3 WorldNormal = normalize(cross(WorldPosition0 - WorldPosition, WorldPosition1 - WorldPosition));
 #elif FORWARD_SHADING_NORMAL_CALC // && !FORWARD_SHADING_ACCURATE_NORMAL
 			// Compute normal using a ddx/ddy hack, hopefully the neighbooring particules will be close enough...
 			float3 WorldNormal = normalize(cross(ddx(WorldPosition), ddy(WorldPosition)));
-			WorldNormal *= sign(dot(ResolvedView.TranslatedWorldCameraOrigin - NewPosition, WorldNormal));
+			WorldNormal *= sign(dot(View.WorldCameraOrigin - NewPosition, WorldNormal));
 #else //!FORWARD_SHADING_NORMAL_CALC
 			// Sample the normal buffer to create a plane to collide against.
 			float3 WorldNormal = Texture2DSampleLevel(SceneTexturesStruct.GBufferATexture, SceneTexturesStruct_GBufferATextureSampler, ScreenUV, 0).xyz * 2.0 - 1.0;
@@ -375,6 +391,8 @@ void CollideWithDepthBuffer(
 
 			// Compute the portion of velocity normal to the collision plane.
 			float VelocityDot = dot(CollisionPlane.xyz, DeltaPosition.xyz);
+
+
 
 #if IMPROVED_DEPTH_BUFFER_COLLISION
 			// distance to the plane from current and predicted position
@@ -435,8 +453,6 @@ void CollideWithDepthBuffer(
 #endif
 		}
 	}
-
-	NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.PreViewTranslation);
 }
 #endif // #if DEPTH_BUFFER_COLLISION
 
@@ -446,22 +462,20 @@ void CollideWithDepthBuffer(
  * Compute collision with the global signed distance field
  */
 void CollideWithDistanceField(
-	out FLWCVector3 NewPosition_LWC,
+	out float3 NewPosition,
 	out float3 NewVelocity,
 	inout float RelativeTime,
-	in FLWCVector3 InPosition_LWC,
+	in float3 InPosition,
 	in float3 InVelocity,
 	in float3 Acceleration,
 	in float CollisionRadius,
 	in float Resilience
 	)
 {
-	float3 InPosition = LWCToFloat(LWCAdd(InPosition_LWC, PrimaryView.PreViewTranslation));
-
 	// Integration assuming no collision.
 	float3 MidVelocity = InVelocity.xyz + 0.5f * Acceleration;
 	float3 DeltaPosition = DeltaSeconds * MidVelocity;
-	float3 NewPosition = InPosition.xyz + DeltaPosition;
+	NewPosition = InPosition.xyz + DeltaPosition;
 	NewVelocity = InVelocity.xyz + Acceleration;
 
 	float DistanceToNearestSurface = GetDistanceToNearestSurfaceGlobal(InPosition);
@@ -514,8 +528,6 @@ void CollideWithDistanceField(
 			RelativeTime = 1.1f;
 		}
 	}
-
-	NewPosition_LWC = LWCSubtract(NewPosition, PrimaryView.PreViewTranslation);
 }
 
 #endif
@@ -540,7 +552,7 @@ void PixelMain(
 	const float TimeScale = VelocitySample.w;
 
 	// Position.w holds the relative time of the particle.
-	FLWCVector3 Position = MakeLWCVector3(LWCTile, PositionSample.xyz);
+	float3 Position = PositionSample.xyz;
 	float RelativeTime = PositionSample.w;
 
 	for (int IterationIndex = 0; IterationIndex < NumIterations; ++IterationIndex)
@@ -563,7 +575,7 @@ void PixelMain(
 		// Evalute vector fields.
 		float3 FieldForce = 0;
 		float4 FieldVelocity = 0;
-		EvaluateVectorFields(FieldForce, FieldVelocity, LWCHackToFloat(Position), PerParticleVectorFieldScale);		//LWC_TODO: This needs to be rebased
+		EvaluateVectorFields(FieldForce, FieldVelocity, Position.xyz, PerParticleVectorFieldScale);
 
 		// Add in force from vector fields.
 		Force += FieldForce;
@@ -576,7 +588,7 @@ void PixelMain(
 		Force += ComputeDrag(Velocity.xyz, DragCoefficient);
 
 		// Compute force to a point gravity source.
-		Force += ComputeAttractionForce(LWCHackToFloat(Position));	//LWC_TODO: This needs to be rebased
+		Force += ComputeAttractionForce(Position.xyz);
 
 		// Compute the acceleration to apply to the particle this frame.
 		float3 Acceleration = Force * DeltaSeconds;
@@ -599,43 +611,45 @@ void PixelMain(
 		float CollisionRadius = min(Size.x,Size.y) * Simulation.CollisionRadiusScale + Simulation.CollisionRadiusBias;
 	#endif
 
-		FLWCVector3 NewPosition;
-		float3 NewVelocity;
+		float3 NewPosition, NewVelocity;
 
 	#if DEPTH_BUFFER_COLLISION
+	
 		// Compute the new position and velocity of the particle by colliding against
 		// the scene's depth buffer.
 		CollideWithDepthBuffer(
-			NewPosition,
-			NewVelocity,
+			NewPosition.xyz,
+			NewVelocity.xyz,
 			RelativeTime,
-			Position,
-			Velocity,
-			Acceleration,
-			CollisionRadius,
-			Resilience
-		);
-	#elif DISTANCE_FIELD_COLLISION
-		CollideWithDistanceField(
-			NewPosition,
-			NewVelocity,
-			RelativeTime,
-			Position,
-			Velocity,
+			Position.xyz,
+			Velocity.xyz,
 			Acceleration,
 			CollisionRadius,
 			Resilience
 			);
+	#elif DISTANCE_FIELD_COLLISION
+
+		CollideWithDistanceField(
+			NewPosition.xyz,
+			NewVelocity.xyz,
+			RelativeTime,
+			Position.xyz,
+			Velocity.xyz,
+			Acceleration,
+			CollisionRadius,
+			Resilience
+			);
+
 	#else 
 		// Integrate position and velocity forward.
 		float3 DeltaPosition = DeltaSeconds * (Velocity.xyz + 0.5f * Acceleration);
-		NewPosition = LWCAdd(Position, DeltaPosition);
+		NewPosition = Position.xyz + DeltaPosition;
 		NewVelocity = Velocity.xyz + Acceleration;
 	#endif
 
 		// Apply orbit.
 		const float3 OrbitVelocity = ComputeOrbitVelocity(RelativeTime, OrbitRandom);
-		NewPosition = LWCAdd(NewPosition, OrbitVelocity * DeltaSeconds);
+		NewPosition += OrbitVelocity * DeltaSeconds;
 
 		// Update values for new iteration.
 		Velocity = NewVelocity;
@@ -643,7 +657,7 @@ void PixelMain(
 	}
 
 	// Store the new position, time, and velocity for the particle.
-	OutPosition.xyz = LWCToFloat(LWCSubtract(Position, MakeLWCVector3(LWCTile, 0))) + PositionOffsetAndAttractorStrength.xyz;
+	OutPosition.xyz = Position + PositionOffsetAndAttractorStrength.xyz;
 	OutPosition.w = RelativeTime;
 	OutVelocity.xyz = Velocity;
 	OutVelocity.w = TimeScale;

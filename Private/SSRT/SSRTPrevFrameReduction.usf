@@ -35,7 +35,6 @@ SamplerState HigherMipTextureSampler;
 SamplerState HigherAlphaMipTextureSampler;
 #endif
 
-float4 PrevBufferBilinearUVMinMax;
 float4 PrevScreenPositionScaleBias;
 float2 ViewportUVToHZBBufferUV;
 float2 ReducedSceneColorSize;
@@ -44,7 +43,6 @@ float2 HigherMipBufferBilinearMax;
 float PrevSceneColorPreExposureCorrection;
 float MinimumLuminance;
 float HigherMipDownScaleFactor;
-float SkyDistance;
 
 RWTexture2D<float4>	ReducedSceneColorOutput_0;
 RWTexture2D<float4>	ReducedSceneColorOutput_1;
@@ -67,8 +65,7 @@ float3 ComputeTranslatedWorldPosition(float2 ScreenPosition, float WorldDepth, b
 
 	if (bIsPrevFrame)
 	{
-		float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
-		return mul(ClipPosition, View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
+		return mul(ClipPosition, View.PrevScreenToTranslatedWorld).xyz + (View.PreViewTranslation.xyz - View.PrevPreViewTranslation.xyz);
 	}
 	
 	return mul(ClipPosition, View.ScreenToTranslatedWorld).xyz;
@@ -128,7 +125,7 @@ void MainCS(
 
 				float4 SampleColor = float4(
 					HigherMipTexture.SampleLevel(HigherMipTextureSampler, SampleUV, 0).rgb,
-					HigherAlphaMipTexture.SampleLevel(HigherAlphaMipTextureSampler, SampleUV, 0).r);
+					Texture2DSample_A8(HigherAlphaMipTexture,HigherAlphaMipTextureSampler, SampleUV));
 
 				PrevColor += SampleColor * SampleWeight;
 			}
@@ -150,7 +147,7 @@ void MainCS(
 		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip);
 		float2 PrevScreen = PrevClip.xy / PrevClip.w;
 
-		bool bIsSky = WorldDepth > SkyDistance && SkyDistance > 0.0;
+		bool bIsSky = WorldDepth > 100 * 1000;
 
 		float4 EncodedVelocity = GBufferVelocityTexture.SampleLevel(GBufferVelocityTextureSampler, SceneBufferUV, 0);
 		if (EncodedVelocity.x > 0.0)
@@ -178,7 +175,7 @@ void MainCS(
 			//for (uint i = 0; i < 4; i++)
 			{
 				float2 SampleUV = PrevFrameUV; // + View.BufferSizeAndInvSize.zw * (float2(i % 2, i / 2) - 0.5);
-				SampleUV = clamp(SampleUV, PrevBufferBilinearUVMinMax.xy, PrevBufferBilinearUVMinMax.zw);
+				SampleUV = clamp(SampleUV, View.BufferBilinearUVMinMax.xy, View.BufferBilinearUVMinMax.zw);
 
 				float PrevDeviceZ = PrevSceneDepth.SampleLevel(PrevSceneDepthSampler, SampleUV, 0).r;
 
@@ -199,15 +196,17 @@ void MainCS(
 
 		PrevColor = -min(-PrevColor, 0.0);
 
-
-		// Ignore sky contribution because in skylight
-		if (bIsSky)
+		#if CONFIG_COLOR_TILE_CLASSIFICATION
 		{
-			PrevColor = 0;
+			if (bIsSky)
+				PrevColor = 0;
 		}
+		#endif
 
 		// Correct scene color exposure.
-		PrevColor.rgb *= PrevSceneColorPreExposureCorrection;
+		#if USE_PREEXPOSURE
+			PrevColor.rgb *= PrevSceneColorPreExposureCorrection;
+		#endif
 
 		// Apply vignette to the color.
 		{
@@ -256,7 +255,7 @@ void MainCS(
 		UNROLL
 		for (uint MipLevel = 1; MipLevel < 3; MipLevel++)
 		{
-			const uint ReductionAmount = 1u << MipLevel;
+			const uint ReductionAmount = 1 << MipLevel;
 			const uint NumberPixelInMip = GROUP_PIXEL_COUNT / (ReductionAmount * ReductionAmount);
 			
 			if (GroupThreadIndex < NumberPixelInMip)

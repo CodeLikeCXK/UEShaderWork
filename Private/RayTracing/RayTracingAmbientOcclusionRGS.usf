@@ -6,7 +6,6 @@
 #include "../SceneTextureParameters.ush"
 #include "../PathTracing/Utilities/PathTracingRandomSequence.ush"
 #include "../SphericalGaussian.ush"
-#include "../Strata/Strata.ush"
 #include "RayTracingCommon.ush"
 #include "RayTracingDeferredShadingCommon.ush"
 
@@ -34,7 +33,7 @@ float ComputeWorldBluringRadiusCausedByPixelSize(float WorldDepth)
 
 void GenerateCosineNormalRay(
 	uint2 PixelCoord,
-	float3 TranslatedWorldPosition,
+	float3 WorldPosition,
 	float3 WorldNormal,
 	float3 GeometricNormal,
 	inout RandomSequence RandSequence,
@@ -68,7 +67,7 @@ void GenerateCosineNormalRay(
 		float3 Direction_World = TangentToWorld(Direction_Tangent.xyz, WorldNormal);
 	#endif
 
-	RayOrigin = TranslatedWorldPosition;
+	RayOrigin = WorldPosition;
 	RayDirection = Direction_World;
 	RayTMin = 0.0;
 	RayTMax = MaxRayDistance;
@@ -81,43 +80,42 @@ float3 SampleNeightborPosition(uint2 PixelCoord, int2 Offset)
 
 	float DeviceZ = SceneDepthTexture.Load(int3(ClampedPixelCoord, 0)).r;
 
-	return ReconstructTranslatedWorldPositionFromDeviceZ(PixelCoord + Offset, DeviceZ);
+	return ReconstructWorldPositionFromDeviceZ(PixelCoord + Offset, DeviceZ);
 }
 
 RAY_TRACING_ENTRY_RAYGEN(AmbientOcclusionRGS)
 {
-	const uint2 PixelCoord = DispatchRaysIndex().xy + View.ViewRectMin.xy;
+	uint2 PixelCoord = DispatchRaysIndex().xy + View.ViewRectMin;
 
-	#if STRATA_ENABLED
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
-	const bool bIsValid = IsStrataMaterial(TopLayerData);
-	const bool bReconstructGeometryNormal = true; // STRATA_TODO: legacy avoids this on foliage, how do we do that?
-	const float3 WorldNormal = TopLayerData.WorldNormal;
-	#else
-	const FGBufferData GBufferData = GetGBufferDataFromSceneTexturesLoad(PixelCoord);
-	const bool bIsValid = GBufferData.ShadingModelID != SHADINGMODELID_UNLIT;
-	const bool bReconstructGeometryNormal = GBufferData.ShadingModelID != SHADINGMODELID_TWOSIDED_FOLIAGE;
-	const float3 WorldNormal = GBufferData.WorldNormal;
-	#endif
+	// Get G-Buffer surface data
+	float2 InvBufferSize = View.BufferSizeAndInvSize.zw;
+	float2 UV = (float2(PixelCoord) + 0.5) * InvBufferSize;
 
-	const float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
-	const float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+#if 0
+	FGBufferData GBufferData = GetGBufferDataFromSceneTextures(UV);
+#else
+	//#dxr-todo: workaround for flickering. UE-87281
+	FGBufferData GBufferData = GetGBufferDataFromSceneTexturesLoad(PixelCoord);
+#endif
 
-	float3 TranslatedWorldPosition;
+	float Depth = GBufferData.Depth;
+	float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
+	float3 WorldPosition;
 	float3 CameraDirection;
-	ReconstructTranslatedWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, TranslatedWorldPosition, CameraDirection);
+	ReconstructWorldPositionAndCameraDirectionFromDeviceZ(PixelCoord, DeviceZ, WorldPosition, CameraDirection);
+	float3 WorldNormal = GBufferData.WorldNormal;
 
 	float3 GeometricNormal;
 	float ShadingDotGeometric;
-	if (bReconstructGeometryNormal && CONFIG_SHOOT_WITH_GEOMETRIC_NORMAL)
+	if (GBufferData.ShadingModelID != SHADINGMODELID_TWOSIDED_FOLIAGE && CONFIG_SHOOT_WITH_GEOMETRIC_NORMAL)
 	{
-		float WorldPixelRadius = ComputeWorldBluringRadiusCausedByPixelSize(SceneDepth);
+		float WorldPixelRadius = ComputeWorldBluringRadiusCausedByPixelSize(Depth);
 
-		float3 E = SampleNeightborPosition(PixelCoord, int2( 1,  0)) - TranslatedWorldPosition;
-		float3 W = SampleNeightborPosition(PixelCoord, int2(-1,  0)) - TranslatedWorldPosition;
+		float3 E = SampleNeightborPosition(PixelCoord, int2( 1,  0)) - WorldPosition;
+		float3 W = SampleNeightborPosition(PixelCoord, int2(-1,  0)) - WorldPosition;
 
-		float3 N = SampleNeightborPosition(PixelCoord, int2( 0, -1)) - TranslatedWorldPosition;
-		float3 S = SampleNeightborPosition(PixelCoord, int2( 0,  1)) - TranslatedWorldPosition;
+		float3 N = SampleNeightborPosition(PixelCoord, int2( 0, -1)) - WorldPosition;
+		float3 S = SampleNeightborPosition(PixelCoord, int2( 0,  1)) - WorldPosition;
 
 		float DH = dot(E, View.ViewForward) + dot(W, View.ViewForward);
 		float DV = dot(N, View.ViewForward) + dot(S, View.ViewForward);
@@ -162,7 +160,7 @@ RAY_TRACING_ENTRY_RAYGEN(AmbientOcclusionRGS)
 	
 	// Mask out depth values beyond far plane
 	bool IsFiniteDepth = DeviceZ > 0.0;
-	bool bTraceRay = (IsFiniteDepth && bIsValid);
+	bool bTraceRay = (IsFiniteDepth && GBufferData.ShadingModelID != SHADINGMODELID_UNLIT);
 	if (!bTraceRay)
 	{
 		Visibility = 1.0;
@@ -174,13 +172,13 @@ RAY_TRACING_ENTRY_RAYGEN(AmbientOcclusionRGS)
 
 	for (uint SampleIndex = 0; SampleIndex < SamplesPerPixelLocal; ++SampleIndex)
 	{
-		FRayDesc Ray;
+		RayDesc Ray;
 		float RayPDF;
 
 		RandomSequence RandSequence;
 		RandomSequence_Initialize(RandSequence, PixelCoord, SampleIndex, TimeSeed, SamplesPerPixelLocal);
 
-		GenerateCosineNormalRay(PixelCoord, TranslatedWorldPosition, WorldNormal, GeometricNormal, RandSequence, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPDF);
+		GenerateCosineNormalRay(PixelCoord, WorldPosition, WorldNormal, GeometricNormal, RandSequence, Ray.Origin, Ray.Direction, Ray.TMin, Ray.TMax, RayPDF);
 		ApplyCameraRelativeDepthBias(Ray, PixelCoord, DeviceZ, WorldNormal, MaxNormalBias);
 
 		//if (dot(WorldNormal, Ray.Direction) <= 0.0) // TODO(Denoiser): does it needs to be handled by the denoiser?
@@ -206,6 +204,7 @@ RAY_TRACING_ENTRY_RAYGEN(AmbientOcclusionRGS)
 			TLAS,
 			RayFlags,
 			InstanceInclusionMask,
+			PixelCoord,
 			Ray);
 
 		RayCount += RayWeight;

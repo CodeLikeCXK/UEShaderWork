@@ -5,7 +5,7 @@
 =============================================================================*/
 
 // Update this GUID to improve shader recompilation for Metal only shaders
-// GUID = C53FCB9D-55EE-439A-BD5C-EFB947FEF98E
+// GUID = ED71607D-0C3E-4E98-B9E3-EA5BBA6DA22B
 
 #pragma once
 
@@ -19,7 +19,7 @@
 #define StrongTypedBuffer Buffer
 
 /* Too many bugs to enable wave-intrinsics just yet, but we are getting there.
-#if COMPUTESHADER || PIXELSHADER
+#if ((MAX_SHADER_LANGUAGE_VERSION >= 3 && COMPUTESHADER) || (MAX_SHADER_LANGUAGE_VERSION >= 4 && PIXELSHADER))
 #define COMPILER_SUPPORTS_WAVE_ONCE 1
 #define COMPILER_SUPPORTS_WAVE_VOTE 1
 #define COMPILER_SUPPORTS_WAVE_MINMAX 1
@@ -39,43 +39,16 @@
 	// 1 component: R_4
 	Texture2D<float> gl_LastFragDataR_4;
 	#define SubpassFetchR_4() gl_LastFragDataR_4.Load(uint3(0, 0, 0), 0)
-
-	Texture2D<float> gl_LastFragDataR_1;
-	#define SubpassFetchR_1() gl_LastFragDataR_1.Load(uint3(0, 0, 0), 0)
 	//
 	// Rest of SubpassFetch can be found in MetalSubpassSupport.ush
 	//
 	#if MOBILE_DEFERRED_SHADING
 		#define DepthbufferFetchES2() SubpassFetchR_4()
 	#else
-		#define DepthbufferFetchES2() SubpassFetchR_1()
+		#define DepthbufferFetchES2() SubpassFetchRGBA_0().w
 	#endif
 #else
 	#define SubpassFetchRGBA_0() ((float4)0.0)
 	#define SubpassFetchR_0() (0.0)
 	#define SubpassFetchR_4() (0.0)
-#endif //IOS && PIXELSHADER
-
-#define MTL_COMPILER_SUPPORTS_ULONG_TYPES (1 && MTL_ENABLE_EXPERIMENTAL_NANITE_SUPPORT)
-#define MTL_COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS (1 && MTL_COMPILER_SUPPORTS_ULONG_TYPES)
-
-#if MTL_COMPILER_SUPPORTS_ULONG_TYPES
-    #define UlongType uint64_t
-
-    UlongType PackUlongType(uint2 Value)
-    {
-        return ((UlongType)Value.y << 32) | Value.x;
-    }
-
-    uint2 UnpackUlongType(UlongType Value)
-    {
-        return uint2(uint(Value), uint(Value >> 32));
-    }
-#endif
-
-#if MTL_COMPILER_SUPPORTS_UINT64_IMAGE_ATOMICS
-    void ImageInterlockedMaxUInt64(RWTexture2D<UlongType> Dest, uint2 Coord, UlongType Value)
-    {
-        InterlockedMax(Dest[Coord], Value);
-    }
-#endif
+#endif //IOS && PIXELSHADER 

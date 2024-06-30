@@ -2,7 +2,7 @@
 
 #include "Common.ush"
 
-uint2 PageTableSize;
+uint PageTableSize;
 uint FirstUpdate;
 uint NumUpdates;
 
@@ -43,7 +43,7 @@ void PageTableUpdateVS(
 
 	uint vLevel = ( UpdatePacked.w >> 0 ) & 0xff;
 	uint vLogSize = ( UpdatePacked.w >> 8 ) & 0xff;
-	uint vSize = 1u << vLogSize;
+	uint vSize = 1 << vLogSize;
 
 	// Little Endian
 	uint vAddress = UpdatePacked.x | (UpdatePacked.y << 16);

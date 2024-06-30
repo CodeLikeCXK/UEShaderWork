@@ -11,8 +11,16 @@
 #define POST_PROCESS_MATERIAL 0
 #endif
 
+#ifndef POST_PROCESS_MATERIAL_MOBILE
+#define POST_PROCESS_MATERIAL_MOBILE 0
+#endif
+
 #if (POST_PROCESS_MATERIAL == 0)
 #error POST_PROCESS_MATERIAL must be defined to non-zero in the shader compilation environment.
+#endif
+
+#if (FEATURE_LEVEL <= FEATURE_LEVEL_ES3_1) != POST_PROCESS_MATERIAL_MOBILE
+#error POST_PROCESS_MATERIAL_MOBILE define does not match feature level.
 #endif
 
 // Must match ESceneTextureId
@@ -59,9 +67,6 @@ SamplerState PostProcessInput_BilinearSampler;
 #define EYE_ADAPTATION_LOOSE_PARAMETERS 1
 
 #include "/Engine/Generated/Material.ush"
-
-uint ManualStencilReferenceValue;
-uint ManualStencilTestMask;
 
 struct FPostProcessMaterialVSToPS
 {
@@ -159,28 +164,6 @@ void MainVS_VideoOverlay(
 
 #elif PIXELSHADER
 
-#define STENCIL_TEST_EQUAL		0x1u
-#define STENCIL_TEST_LESS		0x2u
-#define STENCIL_TEST_GREATER	0x4u
-
-// Perform the stencil test manually by discarding test failure.
-// This is necessary when Nanite writes custom stencil and the platform cannot support writing arbitrary values directly to
-// the custom stencil buffer per-pixel
-void ManualStencilTest(uint2 PixelPos)
-{
-	const uint Stencil = CalcSceneCustomStencil(PixelPos);
-	const int Diff = ManualStencilReferenceValue - Stencil;
-	const uint Test =
-		(Stencil == ManualStencilReferenceValue	? STENCIL_TEST_EQUAL	: 0) |
-		(Stencil <  ManualStencilReferenceValue	? STENCIL_TEST_LESS		: 0) |
-		(Stencil >  ManualStencilReferenceValue	? STENCIL_TEST_GREATER	: 0);
-
-	if ((Test & ManualStencilTestMask) == 0)
-	{
-		discard;
-	}
-}
-
 void MainPS(
 	in FPostProcessMaterialVSToPS Input,
 	out float4 OutColor : SV_Target0
@@ -193,10 +176,6 @@ void MainPS(
 	// can be optimized
 	float4 SvPosition = Input.Position;
 	float2 ViewportUV = (SvPosition.xy - PostProcessOutput_ViewportMin.xy) * PostProcessOutput_ViewportSizeInverse.xy;
-
-#if MANUAL_STENCIL_TEST
-	ManualStencilTest((uint2)SvPosition.xy);
-#endif
 
 #if NUM_TEX_COORD_INTERPOLATORS
 	{
@@ -223,37 +202,15 @@ void MainPS(
 	// fill out other related material parameters
 	CalcMaterialParametersPost(Parameters, PixelMaterialInputs, SvPosition, true);
 
-	// In Unreal, an alpha channel value of 0.0f means that the pixel is opaque and a value of 1.0f means that there is translucency.
-	// This is the opposite of how the alpha channel is interpreted in formats like PNG. For this reason, rendered images that are exported
-	// from the engine will have their alpha channel inverted to match the PNG convention. However, for consistency inside the rendering chain,
-	// we need to stick to 0.0f as the default value.
-	float Alpha = 0.0f;
-#if STRATA_ENABLED
-
-	// Unlit forces a single BSDF
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	SanitizeStrataUnlit(UnlitBSDF);
-
 	// Grab emissive colour as output
-  #if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
-	// Transmittance = 1 - opacity. See UMaterialExpressionStrataPostProcess.
-	const float UnlitBSDFTransmittance = UNLIT_TRANSMITTANCE(UnlitBSDF).x;
-	const float UnlitBSDFOpacity = 1.0f - UnlitBSDFTransmittance;
-	Alpha = UnlitBSDFOpacity;
-  #endif
-
-	const float3 Emissive = BSDF_GETEMISSIVE(UnlitBSDF);
-
+#if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
+	const float Alpha = GetMaterialOpacity(PixelMaterialInputs);
 #else
-	// Grab emissive colour as output
-  #if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
-	Alpha = GetMaterialOpacity(PixelMaterialInputs);
-  #endif
-	const float3 Emissive = GetMaterialEmissive(PixelMaterialInputs);
+	const float Alpha = 1.0f;
 #endif
-	OutColor = float4(Emissive, Alpha );
+	OutColor = float4(GetMaterialEmissive(PixelMaterialInputs), Alpha );
 
-#if !MATERIALBLENDING_MODULATE && POST_PROCESS_MATERIAL_BEFORE_TONEMAP
+#if !MATERIALBLENDING_MODULATE && USE_PREEXPOSURE && POST_PROCESS_MATERIAL_BEFORE_TONEMAP
 	OutColor.xyz *= View.PreExposure;
 #endif
 } 
@@ -289,11 +246,7 @@ void MainPS_VideoOverlay(
 #if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
 	const float Alpha = GetMaterialOpacity(PixelMaterialInputs);
 #else
-	// In Unreal, an alpha channel value of 0.0f means that the pixel is opaque and a value of 1.0f means that there is translucency.
-	// This is the opposite of how the alpha channel is interpreted in formats like PNG. For this reason, rendered images that are exported
-	// from the engine will have their alpha channel inverted to match the PNG convention. However, for consistency inside the rendering chain,
-	// we need to stick to 0.0f as the default value.
-	const float Alpha = 0.0f;
+	const float Alpha = 1.0f;
 #endif
 	OutColor = float4(GetMaterialEmissive(PixelMaterialInputs), Alpha );
 }
@@ -303,7 +256,14 @@ void MainPS_VideoOverlay(
 
 #endif
 
-#else // FEATURE_LEVEL > FEATURE_LEVEL_ES3_1
+#else // FEATURE_LEVEL_ES3_1
+
+Texture2D MobileCustomStencilTexture;
+SamplerState MobileCustomStencilTextureSampler;
+
+int MobileStencilValueRef; // Use integer cause it has to be negative to make the less function to pass the test as always
+
+uint bFlipYAxis;
 
 //
 // Mobile version
@@ -342,6 +302,19 @@ void MainVS(
 #endif
 }
 
+#define MOBILE_STENCIL_COMPARE_LESS				0
+#define MOBILE_STENCIL_COMPARE_LESSEQUAL		1
+#define MOBILE_STENCIL_COMPARE_GREATE			2
+#define MOBILE_STENCIL_COMPARE_GREATEEQUAL		3
+#define MOBILE_STENCIL_COMPARE_EQUAL			4
+#define MOBILE_STENCIL_COMPARE_NOTEQUAL			5
+#define MOBILE_STENCIL_COMPARE_NEVER			6
+#define MOBILE_STENCIL_COMPARE_ALWAYS			7
+
+#ifndef MOBILE_STENCIL_COMPARE_FUNCTION
+#define MOBILE_STENCIL_COMPARE_FUNCTION MOBILE_STENCIL_COMPARE_NEVER
+#endif
+
 void MainPS(
 	in FPostProcessMaterialVSToPS Input,
 	out half4 OutColor : SV_Target0
@@ -353,7 +326,11 @@ void MainPS(
 
 	// can be optimized
 	float4 SvPosition = Input.Position;
-	float2 ViewportUV = (SvPosition.xy - PostProcessOutput_ViewportMin.xy) * PostProcessOutput_ViewportSizeInverse.xy;
+	if (bFlipYAxis)
+	{
+		SvPosition.y = PostProcessOutput_ViewportSize.y - SvPosition.y;
+	}
+	float2 ViewportUV = (SvPosition - PostProcessOutput_ViewportMin) * PostProcessOutput_ViewportSizeInverse;
 	float2 BufferUV = ViewportUVToBufferUV(ViewportUV);
 	
 #if NUM_TEX_COORD_INTERPOLATORS
@@ -376,43 +353,45 @@ void MainPS(
 		
 	float ClipValue = 1.0f;
 
+#if MOBILE_STENCIL_COMPARE_FUNCTION != MOBILE_STENCIL_COMPARE_NEVER && MOBILE_STENCIL_COMPARE_FUNCTION != MOBILE_STENCIL_COMPARE_ALWAYS
+	int MobileStencilValue = floor(Texture2DSample(MobileCustomStencilTexture, MobileCustomStencilTextureSampler, BufferUV).r*255.0f + 0.5f);
+#endif
+
+#if MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_LESS
+	ClipValue = MobileStencilValueRef < MobileStencilValue ? 1.0f : -1.0f;
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_LESSEQUAL
+	ClipValue = MobileStencilValueRef <= MobileStencilValue ? 1.0f : -1.0f;
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_GREATE
+	ClipValue = MobileStencilValueRef > MobileStencilValue ? 1.0f : -1.0f;
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_GREATEEQUAL
+	ClipValue = MobileStencilValueRef >= MobileStencilValue ? 1.0f : -1.0f;
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_EQUAL
+	ClipValue = MobileStencilValueRef == MobileStencilValue ? 1.0f : -1.0f;
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_NOTEQUAL
+	ClipValue = MobileStencilValueRef != MobileStencilValue ? 1.0f : -1.0f;
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_NEVER
+#elif MOBILE_STENCIL_COMPARE_FUNCTION == MOBILE_STENCIL_COMPARE_ALWAYS
+	ClipValue = MobileStencilValueRef == 256 ? 1.0f : -1.0f;
+#endif
+
+#if MOBILE_STENCIL_COMPARE_FUNCTION != MOBILE_STENCIL_COMPARE_NEVER
+	clip(ClipValue);
+#endif
+
 	float DeviceZ = LookupDeviceZ(BufferUV);
 	SvPosition.z = DeviceZ;
 	SvPosition.z = max(SvPosition.z, 1e-18);
 	// fill out other related material parameters
 	CalcMaterialParametersPost(Parameters, PixelMaterialInputs, SvPosition, true);
 
-#if STRATA_ENABLED
-
-	// Unlit forces a single BSDF
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	SanitizeStrataUnlit(UnlitBSDF);
-
-	// Grab emissive colour as output
-  #if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
-  // Transmittance = 1 - opacity. See UMaterialExpressionStrataPostProcess.
-	const half UnlitBSDFTransmittance = UNLIT_TRANSMITTANCE(UnlitBSDF).x;
-	const half UnlitBSDFOpacity = 1.0f - UnlitBSDFTransmittance;
-	half Alpha = UnlitBSDFOpacity;
-  #else
-	half Alpha = 0.0f;
-  #endif
-
-	const half3 EmissiveColor = BSDF_GETEMISSIVE(UnlitBSDF);
-
-#else // STRATA_ENABLED
-
 	// Grab emissive colour as output
 	half3 EmissiveColor = GetMaterialEmissive(PixelMaterialInputs);
 	
-  #if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
+#if MATERIAL_OUTPUT_OPACITY_AS_ALPHA
 	half Alpha = GetMaterialOpacity(PixelMaterialInputs);
-  #else
-	half Alpha = 0.0f;
-  #endif
-
-#endif // STRATA_ENABLED
-
+#else
+	half Alpha = Parameters.BackupSceneColorAlpha;
+#endif
 	half4 FullSceneColor = half4(EmissiveColor, Alpha);
 	   
 #if POST_PROCESS_MATERIAL_BEFORE_TONEMAP
@@ -420,10 +399,10 @@ void MainPS(
 	FullSceneColor.rgb = sqrt(FullSceneColor.rgb);
 #endif
 
-#if !MATERIALBLENDING_MODULATE
+#if !MATERIALBLENDING_MODULATE && USE_PREEXPOSURE
 	FullSceneColor.xyz *= View.PreExposure;
 #endif
 #endif
 	OutColor = FullSceneColor;
 }
-#endif // FEATURE_LEVEL > FEATURE_LEVEL_ES3_1
+#endif //(FEATURE_LEVEL > FEATURE_LEVEL_ES3_1)

@@ -140,7 +140,7 @@ void MainCS(
 	float2 SceneBufferUV = DispatchThreadId * ThreadIdToBufferUV.xy + ThreadIdToBufferUV.zw;
 	if (true)
 	{
-		SceneBufferUV = clamp(SceneBufferUV, DenoiserBufferBilinearUVMinMax.xy, DenoiserBufferBilinearUVMinMax.zw);
+		SceneBufferUV = clamp(SceneBufferUV, BufferBilinearUVMinMax.xy, BufferBilinearUVMinMax.zw);
 	}
 	
 	// Read reference meta data.
@@ -148,9 +148,8 @@ void MainCS(
 
 	// Sample the harmonics.
 	FSSDSignalArray MultiplexedHarmonics[4];
-	FSSDSignalFrequencyArray MultiplexedFrequencies;
 	{
-		SampleMultiplexedSignals(
+		MultiplexedHarmonics[0] = SampleMultiplexedSignals(
 			SignalHarmonics_0_Textures_0,
 			SignalHarmonics_0_Textures_1,
 			SignalHarmonics_0_Textures_2,
@@ -160,10 +159,9 @@ void MainCS(
 			/* MultiplexedSampleId = */ 0,
 			/* bNormalizeSample = */ false,
 			SceneBufferUV,
-			MultiplexedHarmonics[0],
-			MultiplexedFrequencies);
+			/* MipLevel = */ 0);
 	
-		SampleMultiplexedSignals(
+		MultiplexedHarmonics[1] = SampleMultiplexedSignals(
 			SignalHarmonics_1_Textures_0,
 			SignalHarmonics_1_Textures_1,
 			SignalHarmonics_1_Textures_2,
@@ -173,10 +171,9 @@ void MainCS(
 			/* MultiplexedSampleId = */ 0,
 			/* bNormalizeSample = */ false,
 			SceneBufferUV,
-			MultiplexedHarmonics[1],
-			MultiplexedFrequencies);
+			/* MipLevel = */ 0);
 	
-		SampleMultiplexedSignals(
+		MultiplexedHarmonics[2] = SampleMultiplexedSignals(
 			SignalHarmonics_2_Textures_0,
 			SignalHarmonics_2_Textures_1,
 			SignalHarmonics_2_Textures_2,
@@ -186,10 +183,9 @@ void MainCS(
 			/* MultiplexedSampleId = */ 0,
 			/* bNormalizeSample = */ false,
 			SceneBufferUV,
-			MultiplexedHarmonics[2],
-			MultiplexedFrequencies);
+			/* MipLevel = */ 0);
 	
-		SampleMultiplexedSignals(
+		MultiplexedHarmonics[3] = SampleMultiplexedSignals(
 			SignalHarmonics_3_Textures_0,
 			SignalHarmonics_3_Textures_1,
 			SignalHarmonics_3_Textures_2,
@@ -199,13 +195,11 @@ void MainCS(
 			/* MultiplexedSampleId = */ 0,
 			/* bNormalizeSample = */ false,
 			SceneBufferUV,
-			MultiplexedHarmonics[3],
-			MultiplexedFrequencies);
+			/* MipLevel = */ 0);
 	}
 	
 	// Sample the integrated signal.
-	FSSDSignalArray MultiplexedIntegrand;
-	SampleMultiplexedSignals(
+	FSSDSignalArray MultiplexedIntegrand = SampleMultiplexedSignals(
 		SignalIntegrand_Textures_0,
 		SignalIntegrand_Textures_1,
 		SignalIntegrand_Textures_2,
@@ -215,10 +209,9 @@ void MainCS(
 		/* MultiplexedSampleId = */ 0,
 		/* bNormalizeSample = */ true,
 		SceneBufferUV,
-		MultiplexedIntegrand,
-		MultiplexedFrequencies);
+		/* MipLevel = */ 0);
 
-	// Determine computation that needs to be done.
+	// Whitelists computation that needs to be done.
 	FSSDSignalArray OutputSamples = CreateSignalArrayFromScalarValue(0.0);
 	UNROLL_N(CONFIG_SIGNAL_BATCH_SIZE)
 	for (uint MultiplexId = 0; MultiplexId < CONFIG_SIGNAL_BATCH_SIZE; MultiplexId++)
@@ -303,9 +296,6 @@ void MainCS(
 			SignalOutput_UAVs_2,
 			SignalOutput_UAVs_3,
 			CONFIG_SIGNAL_OUTPUT_LAYOUT, CONFIG_SIGNAL_BATCH_SIZE,
-			OutputPixelPostion, 
-			OutputSamples.Array,
-			MultiplexedFrequencies
-			);
+			OutputPixelPostion, OutputSamples.Array);
 	}
 } // MainCS

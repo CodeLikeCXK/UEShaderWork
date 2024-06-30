@@ -8,6 +8,10 @@
 
 #include "Common.ush"
 
+#if VULKAN_PROFILE && COMPILER_DXC && PIXELSHADER
+#	include "/Engine/Public/Platform/Vulkan/VulkanSubpassSupport.ush"
+#endif
+
 // Return far plane when scene textures are disabled in order not to break depthfade
 #define SCENE_TEXTURES_DISABLED_SCENE_DEPTH_VALUE 1e6
 
@@ -75,16 +79,6 @@ float LookupDeviceZ( float2 ScreenUV )
 #endif
 }
 
-/** Returns DeviceZ which is the z value stored in the depth buffer. */
-float LookupDeviceZ(uint2 PixelPos)
-{
-#if SCENE_TEXTURES_DISABLED
-	return SCENE_TEXTURES_DISABLED_SCENE_DEPTH_VALUE;
-#else
-	return SceneTexturesStruct.SceneDepthTexture.Load(int3(PixelPos, 0)).r;
-#endif
-}
-
 /** Returns clip space W, which is world space distance along the View Z axis. */
 float CalcSceneDepth(uint2 PixelPos)
 {
@@ -108,47 +102,14 @@ float4 GatherSceneDepth(float2 UV, float2 InvBufferSize)
 #endif
 }
 
-/** Fetches custom device depth and converts to linear. */
-float CalcSceneCustomDepth(float2 ScreenUV)
-{
-#if SCENE_TEXTURES_DISABLED
-	return SCENE_TEXTURES_DISABLED_SCENE_DEPTH_VALUE;
-#else
-	return ConvertFromDeviceZ(Texture2DSampleLevel(SceneTexturesStruct.CustomDepthTexture, SceneTexturesStruct_CustomDepthTextureSampler, ScreenUV, 0).r);
-#endif
-}
-
-uint CalcSceneCustomStencil(uint2 PixelPos)
-{
-#if SCENE_TEXTURES_DISABLED
-	return 0;
-#else
-	return SceneTexturesStruct.CustomStencilTexture.Load(uint3(PixelPos, 0)) STENCIL_COMPONENT_SWIZZLE;
-#endif
-}
-
-float CalcSceneAO(float2 ScreenUV)
-{
-#if SCENE_TEXTURES_DISABLED
-	return 1.0f;
-#else
-	return Texture2DSampleLevel(SceneTexturesStruct.ScreenSpaceAOTexture, SceneTexturesStruct_ScreenSpaceAOTextureSampler, ScreenUV, 0).r;
-#endif
-}
-
 #endif // SHADING_PATH_DEFERRED
 
 // Only reference MobileSceneTextures uniform buffer if SHADING_PATH_MOBILE
 #if SHADING_PATH_MOBILE
 
-float3 CalcSceneColor(float2 ScreenUV)
-{
-#if SCENE_TEXTURES_DISABLED
-	return float3(0.0f, 0.0f, 0.0f);
-#else
-	return Texture2DSampleLevel(MobileSceneTextures.SceneColorTexture, MobileSceneTextures.SceneColorTextureSampler, ScreenUV, 0).rgb;
+#ifndef VULKAN_SUBPASS_DEPTHFETCH
+	#define	VULKAN_SUBPASS_DEPTHFETCH	VULKAN_PROFILE
 #endif
-}
 
 /** return all channels of the scene lighting texture */
 float4 CalcFullSceneColor(float2 ScreenUV)
@@ -160,50 +121,33 @@ float4 CalcFullSceneColor(float2 ScreenUV)
 #endif
 }
 
-#ifndef MOBILE_DEFERRED_SHADING
-	#define MOBILE_DEFERRED_SHADING 0
-#endif
-
 #ifndef POST_PROCESS_AR_PASSTHROUGH
 	#define	POST_PROCESS_AR_PASSTHROUGH 0
 #endif
-
-#ifndef IS_MOBILE_DEFERREDSHADING_SUBPASS
-	#define IS_MOBILE_DEFERREDSHADING_SUBPASS 0
-#endif
-
-#ifndef IS_MOBILE_DEPTHREAD_SUBPASS
-	#define IS_MOBILE_DEPTHREAD_SUBPASS IS_MOBILE_DEFERREDSHADING_SUBPASS
-#endif
-
-// Special intrinsic to read from the current depth buffer
-#define MOBILE_DEPTHFECTH (IS_MOBILE_DEPTHREAD_SUBPASS || POST_PROCESS_AR_PASSTHROUGH) && PIXELSHADER
-
-#if MOBILE_DEPTHFECTH && VULKAN_PROFILE
-#include "/Engine/Public/Platform/Vulkan/VulkanSubpassSupport.ush"
-#elif MOBILE_DEPTHFECTH && COMPILER_GLSL_ES3_1
-#include "/Engine/Public/Platform/GL/GLSubpassSupport.ush"
-#endif
-
 
 /** Returns DeviceZ which is the z value stored in the depth buffer. */
 float LookupDeviceZ( float2 ScreenUV )
 {
 #if	SCENE_TEXTURES_DISABLED
 	return FarDepthValue;
-#elif FORCE_DEPTH_TEXTURE_READS || COMPILER_SWITCH
+#elif FORCE_DEPTH_TEXTURE_READS 
 	// native Depth buffer lookup
 	return Texture2DSampleLevel(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV, 0).r;
-#elif MOBILE_DEPTHFECTH && COMPILER_GLSL_ES3_1
+#elif (POST_PROCESS_MATERIAL || POST_PROCESS_MATERIAL_MOBILE) && !POST_PROCESS_AR_PASSTHROUGH
+	#if MOBILE_DEFERRED_SHADING
+		return Texture2DSample(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV).r;
+	#else
+		// SceneDepth texture is not accessible during post-processing as we discard it at the end of mobile BasePass
+		// instead fetch DeviceZ from SceneColor.A
+		return Texture2DSample(MobileSceneTextures.SceneColorTexture, MobileSceneTextures.SceneColorTextureSampler, ScreenUV).a;
+	#endif
+#elif COMPILER_GLSL_ES3_1 && PIXELSHADER
 	return DepthbufferFetchES2();
-#elif MOBILE_DEPTHFECTH && VULKAN_PROFILE
+#elif VULKAN_SUBPASS_DEPTHFETCH && PIXELSHADER
+	// Special intrinsic to read from the current depth buffer
 	return VulkanSubpassDepthFetch();
-#elif MOBILE_DEPTHFECTH && (METAL_PROFILE && !MAC)
+#elif (METAL_PROFILE && !MAC) && PIXELSHADER
 	return DepthbufferFetchES2();
-#elif (USE_SCENE_DEPTH_AUX && !MOBILE_DEFERRED_SHADING)
-	// SceneDepth texture is discarded after BasePass (with forward shading) 
-	// instead fetch DeviceZ from SceneDepthAuxTexture
-	return Texture2DSampleLevel(MobileSceneTextures.SceneDepthAuxTexture, MobileSceneTextures.SceneDepthAuxTextureSampler, ScreenUV, 0).r;
 #else
 	// native Depth buffer lookup
 	return Texture2DSampleLevel(MobileSceneTextures.SceneDepthTexture, MobileSceneTextures.SceneDepthTextureSampler, ScreenUV, 0).r;

@@ -21,11 +21,14 @@
 #include "SSDCommon.ush"
 #include "SSDSignalCore.ush"
 
-#include "DenoisingCommon.ush"
-
 #include "../ColorSpace.ush"
 #include "../EyeAdaptationCommon.ush"
 #include "../LightShaderParameters.ush"
+
+#if COMPILE_SIGNAL_COLOR_SH
+	#include "../QuasiRandom.ush"
+#endif
+
 
 #if !defined(CONFIG_SIGNAL_PROCESSING)
 	#error Missing CONFIG_SIGNAL_PROCESSING
@@ -45,7 +48,6 @@
 #elif CONFIG_SIGNAL_PROCESSING == SIGNAL_PROCESSING_DIFFUSE_INDIRECT_AND_AO
 #elif CONFIG_SIGNAL_PROCESSING == SIGNAL_PROCESSING_DIFFUSE_SPHERICAL_HARMONIC
 #elif CONFIG_SIGNAL_PROCESSING == SIGNAL_PROCESSING_SSGI
-#elif CONFIG_SIGNAL_PROCESSING == SIGNAL_PROCESSING_DIFFUSE_PROBE_HIERARCHY
 
 #else
 	#error Unknown CONFIG_SIGNAL_PROCESSING
@@ -70,10 +72,11 @@ struct FSSDSignalDomainKnowledge
 
 float4 LightPositionAndRadius[MAX_SIGNAL_BATCH_SIZE];
 float4 LightDirectionAndLength[MAX_SIGNAL_BATCH_SIZE];
-DECLARE_SCALAR_ARRAY(float, HitDistanceToWorldBluringRadius, MAX_SIGNAL_BATCH_SIZE);
-DECLARE_SCALAR_ARRAY(uint, LightType, MAX_SIGNAL_BATCH_SIZE);
+float HitDistanceToWorldBluringRadius[MAX_SIGNAL_BATCH_SIZE];
+uint LightType[MAX_SIGNAL_BATCH_SIZE];
 
-uint FrameIndex;
+Texture2D UnusedLightSourceTexture;
+
 
 /** Returns the FLightShaderParameters from the root shader parameters. */
 FSSDSignalDomainKnowledge GetSignalDomainKnowledge(uint BatchedSignalId)
@@ -86,16 +89,18 @@ FSSDSignalDomainKnowledge GetSignalDomainKnowledge(uint BatchedSignalId)
 	SignalDomain.Light.Tangent = 0;
 	SignalDomain.Light.SpotAngles = 0;
 	SignalDomain.Light.SpecularScale = 0;
-	SignalDomain.Light.SoftSourceRadius = 0;	
-	SignalDomain.Light.TranslatedWorldPosition = LightPositionAndRadius[BatchedSignalId].xyz;
+	SignalDomain.Light.SoftSourceRadius = 0;
+	SignalDomain.Light.SourceTexture = UnusedLightSourceTexture;
+	
+	SignalDomain.Light.Position = LightPositionAndRadius[BatchedSignalId].xyz;
 	SignalDomain.Light.Direction = LightDirectionAndLength[BatchedSignalId].xyz;
 	SignalDomain.Light.SourceRadius = LightPositionAndRadius[BatchedSignalId].w;
 	SignalDomain.Light.SourceLength = LightDirectionAndLength[BatchedSignalId].w;
-	SignalDomain.HitDistanceToWorldBluringRadius = GET_SCALAR_ARRAY_ELEMENT(HitDistanceToWorldBluringRadius, BatchedSignalId);
+	SignalDomain.HitDistanceToWorldBluringRadius = HitDistanceToWorldBluringRadius[BatchedSignalId];
 	
 	#if !defined(DIM_LIGHT_TYPE)
 	{
-		SignalDomain.LightType = GET_SCALAR_ARRAY_ELEMENT(LightType, BatchedSignalId);
+		SignalDomain.LightType = LightType[BatchedSignalId];
 	}
 	#else
 	{
@@ -132,12 +137,14 @@ float Luma_To_LumaLog(float x)
 /** Returns the exposure multiplier that should be used for the color transformation of the signal. */
 float GetSignalColorTransformationExposure()
 {
-	// TODO(Denoiser): expose that.
+	// TODO(Denoiser): expose that guy.
 	const float Tweak = 1;
 
 	float FrameExposureScale = EyeAdaptationLookup();
 	
-	FrameExposureScale *= View.OneOverPreExposure;
+	#if USE_PREEXPOSURE
+		FrameExposureScale *= View.OneOverPreExposure;
+	#endif
 
 	return ToScalarMemory(FrameExposureScale * Tweak);
 }
@@ -356,7 +363,7 @@ float ComputeBluringOutOfFocusOfNormalizedSample(FSSDSignalFrequency SampleFrequ
 {
 	float DistanceCameraToPixel = length(View.TranslatedWorldCameraOrigin - GetTranslatedWorldPosition(SceneMetadata));
 
-	return ComputeDenoisingCoc(DistanceCameraToPixel, SampleFrequency.ClosestHitDistance);
+	return SampleFrequency.ClosestHitDistance / (DistanceCameraToPixel + SampleFrequency.ClosestHitDistance);
 }
 
 /** Project the specular lobe in screen space. Returns the major axis of the lobe anysotropy, and the inifinity bluring in ViewportUV.x space. */
@@ -382,13 +389,38 @@ void ProjectSpecularLobeToScreenSpace(
 	}
 
 	{
-		float MajorRoughnessLobeAngle;
-		float MinorRoughnessLobeAngle;
-		ComputeSpecularLobeAngles(V, N, SceneMetadata.Roughness, /* out */ MajorRoughnessLobeAngle, /* out */ MinorRoughnessLobeAngle);
+		// Measure the angle that only truncate 10% of D_GGX's tale.
+		const float E = (1.0 - 0.5);
+		const float SqrtE = sqrt(E);
+
+		const float2 ArrayE[4] = {
+			float2( SqrtE, 0.0),
+			float2(-SqrtE, 0.0),
+			float2(0.0,  SqrtE),
+			float2(0.0, -SqrtE),
+		};
+		
+		float a2 = Pow4(SceneMetadata.Roughness);
+	
+		float3x3 TangentBasis = GetTangentBasis(N);
+		float3 TangentV = mul(TangentBasis, V);
+		
+		// TODO(Denoiser): optimise using lobe symetry along anisotropy major axis.
+		float3 TangentL[4];
+		UNROLL_N(4)
+		for (uint i = 0; i < 4; i++)
+		{
+			// TODO(Denoiser): optimise VALU here.
+			float3 TangentH = ImportanceSampleVisibleGGX(ArrayE[i], a2, TangentV).xyz;
+			TangentL[i] = 2 * dot(TangentV, TangentH) * TangentH - TangentV;
+		}
+	
+		float MajorRoughnessLobeAngle = acos(dot(TangentL[2], TangentL[3]));
+		float MinorRoughnessLobeAngle = acos(dot(TangentL[0], TangentL[1]));
 	
 		/** Return the size of the bluring radius caused by the specular lobe in ViewportUV.x space. */
-		InifinityMajorViewportRadius = LobeAngleToViewportRadius(MajorRoughnessLobeAngle);
-		InifinityMinorViewportRadius = LobeAngleToViewportRadius(MinorRoughnessLobeAngle);
+		InifinityMajorViewportRadius = tan(0.5 * MajorRoughnessLobeAngle) * GetCotanHalfFieldOfView().x;
+		InifinityMinorViewportRadius = tan(0.5 * MinorRoughnessLobeAngle) * GetCotanHalfFieldOfView().x;
 	}
 }
 
@@ -405,7 +437,7 @@ float3 ComputeMajorLightRayDirection(FSSDSampleSceneInfos SceneMetadata, FSSDSig
 	}
 	else
 	{
-		float3 PixelToLightWorldVector = DomainKnowledge.Light.TranslatedWorldPosition - GetTranslatedWorldPosition(SceneMetadata);
+		float3 PixelToLightWorldVector = (DomainKnowledge.Light.Position + View.PreViewTranslation) - GetTranslatedWorldPosition(SceneMetadata);
 		return normalize(PixelToLightWorldVector);
 	}
 }
@@ -413,17 +445,6 @@ float3 ComputeMajorLightRayDirection(FSSDSampleSceneInfos SceneMetadata, FSSDSig
 {
 	// Not used by any pass.
 	return float3(0.0, 0.0, 1.0);
-}
-#endif
-
-float ComputeLightSourceRadius(FSSDSignalDomainKnowledge DomainKnowledge)
-#if CONFIG_SIGNAL_PROCESSING == SIGNAL_PROCESSING_SHADOW_VISIBILITY_MASK
-{
-	return  DomainKnowledge.Light.SourceRadius;
-}
-#else
-{
-	return 0.0f;
 }
 #endif
 
@@ -506,21 +527,14 @@ float ComputeBilateralWeight(
 		
 		float PlaneMisAlignementBilateral;
 		{
-			// Use source radius as encoding error to add more penalty to depth to avoid SSS backface transmission rim for spotlight with source radius > 0.
-			// It makes the scaling of the distance by (DistanceFromLight - HitT)/HitT instead of (DistanceFromLight - HitT)/HitT*SourceRadius
-			// When light is behind close to neighbor in view direction, the light tangent bilaterial will be close to 1. Little penalty
-			// is applied in depth. Adding the effect of SourceRadius on NeighborToRefError could add more penalty to depth to mitigate the
-			// bleeding error.
-			const bool bApplyDepthPenaltyWeightForSSS = RefSceneMetadata.ShadingModelID == SHADINGMODELID_SUBSURFACE_PROFILE && ComputeLightSourceRadius(DomainKnowledge) > 0.0f;
-			const float	NormalEncodingError = bApplyDepthPenaltyWeightForSSS ? DomainKnowledge.Light.SourceRadius : -0.25;
-
+			const float NormalEncodingError = 0.25;
 			
 			float DistFromRefPlane = dot(RefNormal, -NeighborToRefVector);
 
 			float NeighborToRefPlaneDistance = length(-NeighborToRefVector - DistFromRefPlane * RefNormal);
 			float NeighborToRefError = NeighborToRefPlaneDistance * NormalEncodingError;
 
-			PlaneMisAlignementBilateral = saturate(1 - 6 * (abs(DistFromRefPlane) + NeighborToRefError) * InvMaxWorldBluringDistance);
+			PlaneMisAlignementBilateral = saturate(1 - 6 * (abs(DistFromRefPlane) - NeighborToRefError) * InvMaxWorldBluringDistance);
 		}
 
 		PositionBilateralWeight = LightTangentBilateral * PlaneMisAlignementBilateral;
@@ -578,13 +592,6 @@ float ComputeBilateralWeight(
 		
 		if (BilateralSettings & BILATERAL_TOKOYASHI_AXES)
 			AxesSimilarity = exp(-(Beta * (Ref.Sharpness * Neighbor.Sharpness) * InvSharpnessSum) * saturate(1 - dot(Ref.Axis, Neighbor.Axis)));
-	}
-
-	if (BilateralSettings & BILATERAL_SHADING_MODEL)
-	{
-		FLATTEN
-		if (RefSceneMetadata.ShadingModelID != NeighborSceneMetadata.ShadingModelID)
-			return 0.0;
 	}
 
 	return PositionBilateralWeight * NormalBilateralWeight * LobeSimilarity * AxesSimilarity;
@@ -653,11 +660,6 @@ float GetSignalWorldBluringRadius(FSSDSignalFrequency SampleFrequency, FSSDSampl
 	// Not used by any pass.
 	return 0;
 }
-#elif CONFIG_SIGNAL_PROCESSING == SIGNAL_PROCESSING_DIFFUSE_PROBE_HIERARCHY
-{
-	// Not used by any pass.
-	return 0;
-}
 #else
 	#error Unimplemented GetSignalWorldBluringRadius()
 #endif
@@ -685,12 +687,13 @@ float GetSamplePenumbra(FSSDSignalSample Sample)
 FSSDSphericalHarmonicRGB ComputeSampleColorSH(FSSDSampleSceneInfos SampleSceneMetadata, FSSDSignalSample Sample, uint2 NeighborPixelCoord)
 {
 	const uint SamplesPerPixel = 1;
-	RandomSequence RandSequence;
-	RandomSequence_Initialize(RandSequence, NeighborPixelCoord, /* SampleIndex */ 0,  FrameIndex, SamplesPerPixel);
+	FQuasiRandom QuasiRandom;
+	QuasiRandom_Initialize(QuasiRandom, NeighborPixelCoord, 0, SamplesPerPixel);
+	QuasiRandom_Update(QuasiRandom, /* SampleIndex = */ 0, SamplesPerPixel);
 
-	float2 RandSample = RandomSequence_GenerateSample2D(RandSequence);
+	float3 RandSample = QuasiRandom_Sample3(QuasiRandom);
 
-	float4 TangentDirection = CosineSampleHemisphere(RandSample);
+	float4 TangentDirection = CosineSampleHemisphere(RandSample.yz);
 	float3 WorldDirection = TangentToWorld(TangentDirection.xyz, GetWorldNormal(SampleSceneMetadata));
 
 	#if SPHERICAL_HARMONIC_ORDER == 2

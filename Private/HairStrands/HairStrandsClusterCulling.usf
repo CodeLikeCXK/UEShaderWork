@@ -1,14 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "/Engine/Public/Platform.ush"
-#include "../ColorMap.ush"
+#include "../Common.ush"
+#include "HairStrandsDebugCommon.ush"
 #include "HairStrandsAABBCommon.ush"
 #include "HairStrandsClusterCommon.ush"
-#include "HairStrandsVertexFactoryCommon.ush"
-
-#ifndef USE_HAIR_TRIANGLE_STRIP
-	#error Hair triangle geometry type needs to be defined
-#endif
 
 #define COMPACTCS_NUMTHREAD 64
 
@@ -27,6 +22,11 @@ uint ClusterCount;
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Utility functions
 
+uint DivideAndRoundUp(uint Dividend, uint Divisor)
+{
+	return (Dividend + Divisor - 1) / Divisor;
+}
+
 uint3 ComputeDispatchGroupCount2D(uint GroupCount)
 {
 	const uint DispatchCountX = int(floor(sqrt(float(GroupCount))));
@@ -39,8 +39,6 @@ uint3 ComputeDispatchGroupCount2D(uint GroupCount)
 /// Clear clusters AABB
 #ifdef SHADER_CLEARCLUSTERAABB
 
-uint bClearClusterAABBs;
-
 RWBuffer<int> OutClusterAABBBuffer; // Cluster data packed as {uint3 AABBMin, uint3 AABBMax}
 RWBuffer<int> OutGroupAABBBuffer; 	// Group data packed as {uint3 AABBMin, uint3 AABBMax}
 
@@ -48,12 +46,11 @@ RWBuffer<int> OutGroupAABBBuffer; 	// Group data packed as {uint3 AABBMin, uint3
 void MainClearClusterAABBCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 {
 	// Clear 'clusters' AABB
-	if (bClearClusterAABBs > 0 && DispatchThreadId.x < ClusterCount*6)
+	if (DispatchThreadId.x < ClusterCount*6)
 	{
 		const int ClusterId = DispatchThreadId.x / 6;
 		const bool bIsMin = (DispatchThreadId.x - ClusterId * 6) < 3 ? 1 : 0;
 		const int Value = bIsMin ? 2147483647 : -2147483648;
-		checkBufferAccessSlow(OutClusterAABBBuffer, DispatchThreadId.x);
 		OutClusterAABBBuffer[DispatchThreadId.x] = Value;
 	}
 
@@ -76,7 +73,8 @@ void MainClearClusterAABBCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 #ifdef SHADER_DRAWDEBUGAABB
 
 #include "../Common.ush"
-#include "../ShaderPrint.ush"
+#include "../ShaderDrawDebug.ush"
+#include "../ShaderPrintCommon.ush"
 
 #define MODE_CLUSTER	1
 #define MODE_CULLED		2
@@ -100,56 +98,239 @@ void MainDrawDebugAABBCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	if (DispatchThreadId.x == 0)
 	{
 		const bool bDrawClusterInfo = ClusterDebugMode == MODE_CLUSTER || ClusterDebugMode == MODE_CULLED || ClusterDebugMode == MODE_LOD;
-		const uint HairGroupHeight = 15; //bDrawClusterInfo ? 120u : 60u;
+		const float HairGroupHeight = bDrawClusterInfo ? 120.0f : 60.f;
 
-		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50 + (HairGroupId == 0 ? 0 : HairGroupHeight) + HairGroupId * HairGroupHeight));
-
-		FFontColor FontValue = FontWhite;
-		FFontColor FontPercent = FontSilver;
+		float2 StartPos = float2(50.0f, 50.0f + float(HairGroupId) * HairGroupHeight) * View.ViewSizeAndInvSize.zw;
+		float2 Pos = StartPos;
 
 		if (bDrawClusterInfo)
 		{
-			if (HairGroupId == 0)
-			{
-				Print(Context, TEXT("HairGroup   Clusters      Triangles"), FontYellow);
-			#if PERMUTATION_DEBUGAABBBUFFER
-				Print(Context, TEXT("         ScreenSize LOD"), FontYellow);
-			#endif
-				Newline(Context);
-			}
-
 			const uint VisibleClusterCount  = CulledDispatchIndirectParametersClusterCountBuffer[0];
 			const uint VisibleTriangleCount = CulledDrawIndirectParameters[0] / 3; // CulledDrawIndirectParameters contains the total number of triangle indices (3 per triangle)
 
-			Print(Context, HairGroupId, FontOrange);
+			Pos = ShaderPrintSymbol(Pos, _H_);
+			Pos = ShaderPrintSymbol(Pos, _A_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _R_);
+			Pos = ShaderPrintSymbol(Pos, _G_);
+			Pos = ShaderPrintSymbol(Pos, _R_);
+			Pos = ShaderPrintSymbol(Pos, _O_);
+			Pos = ShaderPrintSymbol(Pos, _U_);
+			Pos = ShaderPrintSymbol(Pos, _P_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, HairGroupId);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _C_);
+			Pos = ShaderPrintSymbol(Pos, _O_);
+			Pos = ShaderPrintSymbol(Pos, _U_);
+			Pos = ShaderPrintSymbol(Pos, _N_);
+			Pos = ShaderPrintSymbol(Pos, _T_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _P_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _R_);
+			Pos = ShaderPrintSymbol(Pos, _C_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _N_);
+			Pos = ShaderPrintSymbol(Pos, _T_);
 
-			Print(Context, VisibleClusterCount, FontValue, 5, 0);
-			Print(Context, TEXT(" ["), FontPercent);
-			Print(Context, 100.0f * float(VisibleClusterCount) / float(ClusterCount), FontPercent, 4, 1);
-			Print(Context, TEXT("%] "), FontPercent);
+			Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
 
-			Print(Context, VisibleTriangleCount, FontValue, 9, 0);
-			Print(Context, TEXT(" ["), FontPercent);
-			Print(Context, 100.0f * float(VisibleTriangleCount) / float(TriangleCount), FontPercent, 4, 1);
-			Print(Context, TEXT("%] "), FontPercent);
+			Pos = ShaderPrintSymbol(Pos, _V_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _B_);
+			Pos = ShaderPrintSymbol(Pos, _L_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _C_);
+			Pos = ShaderPrintSymbol(Pos, _L_);
+			Pos = ShaderPrintSymbol(Pos, _U_);
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _T_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _R_);
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrint(Pos, VisibleClusterCount);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrint(Pos, 100.0f * float(VisibleClusterCount) / float(ClusterCount));
 
+			Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
+
+			Pos = ShaderPrintSymbol(Pos, _V_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _B_);
+			Pos = ShaderPrintSymbol(Pos, _L_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _T_);
+			Pos = ShaderPrintSymbol(Pos, _R_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _A_);
+			Pos = ShaderPrintSymbol(Pos, _N_);
+			Pos = ShaderPrintSymbol(Pos, _G_);
+			Pos = ShaderPrintSymbol(Pos, _L_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrint(Pos, VisibleTriangleCount);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrint(Pos, 100.0f * float(VisibleTriangleCount) / float(TriangleCount));
+
+			Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
 		}
 
 		#if PERMUTATION_DEBUGAABBBUFFER
 		{
+			// Extra new line to seperate from previous block
+			Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
+
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _C_);
+			Pos = ShaderPrintSymbol(Pos, _R_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _N_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _S_);
+			Pos = ShaderPrintSymbol(Pos, _I_);
+			Pos = ShaderPrintSymbol(Pos, _Z_);
+			Pos = ShaderPrintSymbol(Pos, _E_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+			Pos = ShaderPrintSymbol(Pos, _SPC_);
+
 			float ScreenSize = 1;
 			{
 				const FHairAABB Bound = ReadHairAABB(0, GroupAABBBuffer);
 
 				const float3 SphereOrigin = (Bound.Min + Bound.Max) * 0.5f;
 				const float  SphereRadius = length(Bound.Max - SphereOrigin);
-				ScreenSize = ComputeBoundsScreenSize(SphereOrigin, SphereRadius, LWCHackToFloat(PrimaryView.WorldCameraOrigin), View.ViewToClip);
+				ScreenSize = ComputeBoundsScreenSize(SphereOrigin, SphereRadius, View.WorldCameraOrigin, View.ViewToClip);
 			}
-			Print(Context, ScreenSize, FontValue, 8, 2);
-			Print(Context, TEXT("   "));
+			Pos = ShaderPrint(Pos, ScreenSize);
+
+			Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
 
 			// Show actual LOD distribution for all clusters. Otherwise show the average LOD index
 			const bool bShowLODHistogram = false;
+
+			if (bShowLODHistogram)
+			{
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _0_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _1_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _2_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _3_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _4_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _5_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _6_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _7_);
+
+				Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
+			}
+		
 			// Aggregate all the cluster results
 			uint LODHistogram[MAX_HAIR_LOD] = { 0,0,0,0,0,0,0,0 };
 			uint TotalVertexCount = 0;
@@ -171,26 +352,57 @@ void MainDrawDebugAABBCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 			if (bShowLODHistogram)
 			{		
-				Print(Context, uint(LODHistogram[0] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[1] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[2] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[3] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[4] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[5] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[6] / float(max(1u, TotalVisibleCluster)) * 100.f));
-				Print(Context, uint(LODHistogram[7] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[0] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[1] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[2] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[3] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[4] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[5] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[6] / float(max(1u, TotalVisibleCluster)) * 100.f));
+				Pos = ShaderPrint(Pos, uint(LODHistogram[7] / float(max(1u, TotalVisibleCluster)) * 100.f));
 			}
 			else
 			{
+				Pos = ShaderPrintSymbol(Pos, _L_);
+				Pos = ShaderPrintSymbol(Pos, _O_);
+				Pos = ShaderPrintSymbol(Pos, _D_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+				Pos = ShaderPrintSymbol(Pos, _SPC_);
+
 				if (TotalVisibleCluster > 0)
 				{
-					Print(Context, AvgLOD, FontValue, 4, 2);
+					Pos = ShaderPrint(Pos, AvgLOD);
 				}
 				else
 				{
-					Print(Context, TEXT("Culled"), FontLightRed);
+					Pos = ShaderPrintSymbol(Pos, _C_);
+					Pos = ShaderPrintSymbol(Pos, _U_);
+					Pos = ShaderPrintSymbol(Pos, _L_);
+					Pos = ShaderPrintSymbol(Pos, _L_);
+					Pos = ShaderPrintSymbol(Pos, _E_);
+					Pos = ShaderPrintSymbol(Pos, _D_);
 				}
 			}
+
+			Pos = ShaderPrintNewline(Pos); Pos.x = StartPos.x;
+
+			// Extra stats for validation purpose
+			// Pos = ShaderPrint(Pos, TotalVertexCount);
+			// Pos = ShaderPrint(Pos, TotalVisibleCluster);
+			// Pos = ShaderPrint(Pos, ScreenSize);
 		}
 		#endif
 
@@ -203,7 +415,7 @@ void MainDrawDebugAABBCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		{
 			const float4 GroupColor = float4(1.0f, 0.5f, 0.0f, 1.0f);
 			const FHairAABB Bound = ReadHairAABB(0, GroupAABBBuffer);
-			AddAABBTWS(Bound.Min, Bound.Max, GroupColor);
+			AddAABB(Bound.Min, Bound.Max, GroupColor);
 		}
 
 		const uint ClusterId = DispatchThreadId;
@@ -243,11 +455,11 @@ void MainDrawDebugAABBCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			}
 
 			float SelectedLod = float(DebugInfo.LOD) / D_LOD_DEBUG_SCALE;
-			Color = float4(GetHSVDebugColor(SelectedLod), 0.05f);
+			Color = float4(GetColorCode(SelectedLod), 0.05f);
 		}
 		#endif
 
-		AddAABBTWS(Min, Max, Color);
+		AddAABB(Min, Max, Color);
 	}
 }
 
@@ -272,7 +484,9 @@ void MainClusterCullingIndClearCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 #else
 	if (DispatchThreadId.x==0)
 	{
-		WriteDispatchIndirectArgs(DispatchIndirectParametersClusterCount, 0, 0, 1, 1);
+		DispatchIndirectParametersClusterCount[0] = 0;
+		DispatchIndirectParametersClusterCount[1] = 1;
+		DispatchIndirectParametersClusterCount[2] = 1;
 
 		DrawIndirectParameters[0] = 0;	// 0 vertex (to be accumulated)
 		DrawIndirectParameters[1] = 1;	// 1 instance
@@ -313,6 +527,11 @@ RWBuffer<uint> DrawIndirectParameters;
 RWStructuredBuffer<FHairClusterDebugInfo> ClusterDebugInfoBuffer;
 #endif
 
+float3			HZBUvFactor;
+float4			HZBSize;
+Texture2D		HZBTexture;
+SamplerState	HZBSampler;
+
 bool ViewFrustumIntersectSphere(float3 SphereOrigin, float SphereRadius)
 {
 	for (uint PlaneIndex = 0; PlaneIndex < NumConvexHullPlanes; PlaneIndex++)
@@ -328,6 +547,70 @@ bool ViewFrustumIntersectSphere(float3 SphereOrigin, float SphereRadius)
 	return true;
 }
 
+// From HZBOcclusion.usf. TODO: make common
+// Rect contains screen coordinates as {minx, miny, maxx, maxy}. Those coordinates are not clamped to screen edges so they mnight be outside the [0,1]^2.
+bool ViewHierarchicalZBufferCulling(float3 WorldBoundsMin, float3 WorldBoundsMax, inout float4 NotClampedRect)
+{
+	float3 WorldBounds[2] = { WorldBoundsMin, WorldBoundsMax };
+
+	// Screen rect from bounds
+	float3 RectMin = float3(1, 1, 1);
+	float3 RectMax = float3(-1, -1, -1);
+	/*UNROLL*/ for (int i = 0; i < 8; i++)
+	{
+		float3 PointSrc;
+		PointSrc.x = WorldBounds[(i >> 0) & 1].x;
+		PointSrc.y = WorldBounds[(i >> 1) & 1].y;
+		PointSrc.z = WorldBounds[(i >> 2) & 1].z;
+
+		float4 PointClip = mul(float4(PointSrc, 1), WorldToClipMatrix);
+		float3 PointScreen = PointClip.xyz / PointClip.w;
+
+		RectMin = min(RectMin, PointScreen);
+		RectMax = max(RectMax, PointScreen);
+	}
+
+	// FIXME assumes DX
+	NotClampedRect = (float4(RectMin.xy, RectMax.xy) * float2(0.5, -0.5).xyxy + 0.5).xwzy;
+	float4 Rect = saturate(NotClampedRect);
+	float4 RectPixels = Rect * HZBSize.xyxy;
+	float2 RectSize = (RectPixels.zw - RectPixels.xy) * 0.5;	// 0.5 for 4x4
+	float Level = max(ceil(log2(max(RectSize.x, RectSize.y))), HZBUvFactor.z);
+
+#if PERMUTATION_HZBCULLING
+	// Check if we can drop one level lower
+	float LevelLower = max(Level - 1, 0);
+	float4 LowerRect = RectPixels * exp2(-LevelLower);
+	float2 LowerRectSize = ceil(LowerRect.zw) - floor(LowerRect.xy);
+	if (all(LowerRectSize <= 4))
+	{
+		Level = LevelLower;
+	}
+
+	// 4x4 samples
+	float2 Scale = HZBUvFactor.xy * (Rect.zw - Rect.xy) / 3;
+	float2 Bias = HZBUvFactor.xy * Rect.xy;
+
+	float4 MinDepth = 1;
+	/*UNROLL*/ for (int j = 0; j < 4; j++)
+	{
+		// TODO could vectorize this
+		float4 Depth;
+		Depth.x = HZBTexture.SampleLevel(HZBSampler, float2(j, 0) * Scale + Bias, Level).r;
+		Depth.y = HZBTexture.SampleLevel(HZBSampler, float2(j, 1) * Scale + Bias, Level).r;
+		Depth.z = HZBTexture.SampleLevel(HZBSampler, float2(j, 2) * Scale + Bias, Level).r;
+		Depth.w = HZBTexture.SampleLevel(HZBSampler, float2(j, 3) * Scale + Bias, Level).r;
+		MinDepth = min(MinDepth, Depth);
+	}
+	MinDepth.x = min(min(MinDepth.x, MinDepth.y), min(MinDepth.z, MinDepth.w));
+
+	// Inverted Z buffer
+	return RectMax.z >= MinDepth.x ? true : false;
+#else
+	return true;
+#endif
+}
+
 [numthreads(64, 1, 1)]
 void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
@@ -337,7 +620,8 @@ void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		// Note on the cluster culling & LOD selection
 		// Run:
 		// 1. Frustum culling
-		// 2. LOD selection
+		// 2. Visibility culling (using HZB)
+		// 3. LOD selection
 		//
 		// When a cluster is culled:
 		// . Cluster's strands position still updated (HairInterpolation), for the lowest LOD
@@ -347,7 +631,6 @@ void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 		const uint ClusterId  = DispatchThreadId.x;
 		const uint ClusterId6 = ClusterId * 6;
-		checkBufferAccessSlow(ClusterAABBBuffer, ClusterId6 + 5);
 		const float3 Min = float3(int3(ClusterAABBBuffer[ClusterId6 + 0], ClusterAABBBuffer[ClusterId6 + 1], ClusterAABBBuffer[ClusterId6 + 2]));
 		const float3 Max = float3(int3(ClusterAABBBuffer[ClusterId6 + 3], ClusterAABBBuffer[ClusterId6 + 4], ClusterAABBBuffer[ClusterId6 + 5]));
 
@@ -369,6 +652,7 @@ void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		if (bVisible || bForceVisible) 
 		{
 			float4 NotClampedRect = float4(0.0f, 1.0f, 0.0f, 1.0f);
+			bVisible = bVisible && ViewHierarchicalZBufferCulling(Min, Max, NotClampedRect);
 			if (bVisible || bForceVisible)
 			{
 				const FHairClusterInfo ClusterInfo = UnpackHairClusterInfo(ClusterInfoBuffer[ClusterId]);
@@ -392,19 +676,11 @@ void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 					InterlockedAdd(DispatchIndirectParametersClusterCount[0], 1, VisibleClusterId);
 
 					//uint PreviousVertexCount = 0;
-				#if USE_HAIR_TRIANGLE_STRIP
-					InterlockedAdd(DrawIndirectParameters[0], ClusterLOD.VertexCount * 2/*, PreviousVertexCount*/);
-				#else
 					InterlockedAdd(DrawIndirectParameters[0], ClusterLOD.VertexCount * 6/*, PreviousVertexCount*/);
-				#endif
 
-					checkBufferAccessSlow(GlobalClusterIdBuffer, VisibleClusterId);
 					GlobalClusterIdBuffer[VisibleClusterId]	  = ClusterId;
-					checkBufferAccessSlow(GlobalIndexStartBuffer, VisibleClusterId);
 					GlobalIndexStartBuffer[VisibleClusterId]  = ClusterLOD.VertexOffset;
-					checkBufferAccessSlow(GlobalIndexCountBuffer, VisibleClusterId);
 					GlobalIndexCountBuffer[VisibleClusterId]  = ClusterLOD.VertexCount;
-					checkBufferAccessSlow(GlobalRadiusScaleBuffer, VisibleClusterId);
 					GlobalRadiusScaleBuffer[VisibleClusterId] = ClusterLOD.RadiusScale;
 				}
 			}
@@ -427,19 +703,11 @@ void MainClusterCullingCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 #endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// 0. Indirect dispatch buffer preparation for compute raster visibility/voxel pass
+/// 0. Indirect dispatch buffer preparation for compute raster visibility pass
 #ifdef SHADER_PREPAREINDIRECTDISPATCH
 
 RWBuffer<uint> DrawIndirectBuffer; 
 RWBuffer<uint> DispatchIndirectBuffer; 
-
-#if PERMUTATION_GROUP_SIZE == 64
-	#define GROUP_SIZE 64
-#elif PERMUTATION_GROUP_SIZE == 32
-	#define GROUP_SIZE 32
-#else
-	#error Unknown group size
-#endif
 
 [numthreads(1, 1, 1)]
 void MainClusterCullingPrepareIndirectDispatchCS(
@@ -449,16 +717,16 @@ void MainClusterCullingPrepareIndirectDispatchCS(
 {
 	if (GroupId.x == 0 && GroupThreadId.x == 0)
 	{
+		// See HairStrandsVisibilityRasterCompute.usf
+		const uint RasterComputeGroupSize = 32;
+		const uint RasterComputeGroupCountX = 16;
+
 		// DrawIndirectBuffer contains the total number of vertex count needed for drawing quad triangle strips, so 6 vertices per quad / control point
 		const uint VertexCount    = DrawIndirectBuffer[0];
-#if USE_HAIR_TRIANGLE_STRIP
-		const uint ControlPoint   = VertexCount / 2;
-#else
-		const uint ControlPoint	  = VertexCount / 6;
-#endif
-		const uint DispatchCount  = DivideAndRoundUp(ControlPoint, GROUP_SIZE);
-		const uint DispatchCountX = DispatchCount >= INDIRECT_GROUP_COUNT_X ? INDIRECT_GROUP_COUNT_X : (DispatchCount % INDIRECT_GROUP_COUNT_X);
-		const uint DispatchCountY = DivideAndRoundUp(DispatchCount, INDIRECT_GROUP_COUNT_X);
+		const uint ControlPoint   = VertexCount / 6;
+		const uint DispatchCount  = DivideAndRoundUp(ControlPoint, RasterComputeGroupSize);
+		const uint DispatchCountX = DispatchCount >= RasterComputeGroupCountX ? RasterComputeGroupCountX : (DispatchCount % RasterComputeGroupCountX);
+		const uint DispatchCountY = DivideAndRoundUp(DispatchCount, RasterComputeGroupCountX);
 
 		DispatchIndirectBuffer[0] = DispatchCountX;
 		DispatchIndirectBuffer[1] = DispatchCountY;
@@ -473,10 +741,8 @@ void MainClusterCullingPrepareIndirectDispatchCS(
 /// 1. Indirect dispatch buffer preparation for rendering and prefix sums
 #ifdef SHADER_PREPAREINDIRECTDRAW
 
-uint GroupSize1D;
 Buffer<uint> DispatchIndirectParametersClusterCount;
 
-RWBuffer<uint> DispatchIndirectParametersClusterCount1D;
 RWBuffer<uint> DispatchIndirectParametersClusterCount2D;
 RWBuffer<uint> DispatchIndirectParametersClusterCountDiv512;
 RWBuffer<uint> DispatchIndirectParametersClusterCountDiv512Div512;
@@ -489,12 +755,19 @@ void MainClusterCullingPrepareIndirectDrawsCS(uint3 DispatchThreadId : SV_Dispat
 		uint ClusterCount = DispatchIndirectParametersClusterCount[0];
 		uint ClusterCountDivUp512 = (ClusterCount + PREFIXSUM_PARALLEL - 1) / PREFIXSUM_PARALLEL;
 		uint ClusterCountDivUp512DivUp512 = (ClusterCountDivUp512 + PREFIXSUM_PARALLEL - 1) / PREFIXSUM_PARALLEL;
-		uint3 DispatchGroupCount2D = ComputeDispatchGroupCount2D(ClusterCount);
 
-		WriteDispatchIndirectArgs(DispatchIndirectParametersClusterCountDiv512, 0, ClusterCountDivUp512, 1, 1);
-		WriteDispatchIndirectArgs(DispatchIndirectParametersClusterCountDiv512Div512, 0, ClusterCountDivUp512DivUp512, 1, 1);
-		WriteDispatchIndirectArgs(DispatchIndirectParametersClusterCount2D, 0, DispatchGroupCount2D.x, DispatchGroupCount2D.y, 1);	
-		WriteDispatchIndirectArgs(DispatchIndirectParametersClusterCount1D, 0, (ClusterCount + GroupSize1D - 1) / GroupSize1D, 1, 1);
+		DispatchIndirectParametersClusterCountDiv512[0] = ClusterCountDivUp512;
+		DispatchIndirectParametersClusterCountDiv512[1] = 1;
+		DispatchIndirectParametersClusterCountDiv512[2] = 1;
+
+		DispatchIndirectParametersClusterCountDiv512Div512[0] = ClusterCountDivUp512DivUp512;
+		DispatchIndirectParametersClusterCountDiv512Div512[1] = 1;
+		DispatchIndirectParametersClusterCountDiv512Div512[2] = 1;
+
+		uint3 DispatchGroupCount2D = ComputeDispatchGroupCount2D(ClusterCount);
+		DispatchIndirectParametersClusterCount2D[0] = DispatchGroupCount2D.x;
+		DispatchIndirectParametersClusterCount2D[1] = DispatchGroupCount2D.y;
+		DispatchIndirectParametersClusterCount2D[2] = 1.0;
 	}
 }
 
@@ -525,8 +798,6 @@ void MainPerBlockPreFixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3
 		uint GlobalIndex = WaveStart + GroupThreadId.x;
 		if (GlobalIndex < ItemCount)
 		{
-			checkBufferAccessSlow(GlobalIndexCountBuffer, GlobalIndex);
-
 			const uint IndexCount = GlobalIndexCountBuffer[GlobalIndex];
 			PrefixSumClusterCount[0][GroupThreadId.x] = IndexCount;
 		}
@@ -554,11 +825,9 @@ void MainPerBlockPreFixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3
 
 		// Write out result, taking into account previous blocks sum
 		uint Result = 0;
-		if (GlobalIndex < ItemCount)
+		if (GlobalIndex < ItemCountRoundUp)
 		{
 			Result = PrefixSumClusterCount[Src][GroupThreadId.x];
-
-			checkBufferAccessSlow(PerBlocklIndexCountPreFixSumBuffer, GlobalIndex);
 
 			if (GroupThreadId.x == 0)
 			{
@@ -572,7 +841,6 @@ void MainPerBlockPreFixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3
 
 		if (GroupThreadId.x == PREFIXSUM_LASTTHREAD)
 		{
-			checkBufferAccessSlow(PerBlocklTotalIndexCountBuffer, GroupId.x);
 			PerBlocklTotalIndexCountBuffer[GroupId.x] = PrefixSumClusterCount[Src][GroupThreadId.x];
 		}
 	}
@@ -657,11 +925,10 @@ void MainClusterCullingPreFixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID,
 
 		// Write out result, taking into account previous blocks sum
 		uint Result = 0;
-		if (GlobalIndex < ItemCount)
+		if (GlobalIndex < ItemCountRoundUp)
 		{
 			Result = PrefixSumClusterCount[Src][DispatchThreadId.x];
 
-			checkBufferAccessSlow(GlobalIndexCountPreFixSumBuffer, GlobalIndex);
 			if (DispatchThreadId.x == 0)
 			{
 				GlobalIndexCountPreFixSumBuffer[GlobalIndex] = uint2(0, Result) + PreviousSum;
@@ -741,9 +1008,7 @@ void MainClusterCullingCompactVertexIdsLocalBlockCS(uint3 DispatchThreadId : SV_
 
 		if (ThreadWriteOffset < ClusterSrcIndexCount)
 		{
-			checkBufferAccessSlow(CulledCompactedIndexBuffer, WriteToIndex + ThreadWriteOffset);
 			CulledCompactedIndexBuffer[WriteToIndex + ThreadWriteOffset] = ClusterVertexIdBuffer[ClusterSrcStartIndex + ThreadWriteOffset];
-			checkBufferAccessSlow(CulledCompactedRadiusScaleBuffer, WriteToIndex + ThreadWriteOffset);
 			CulledCompactedRadiusScaleBuffer[WriteToIndex + ThreadWriteOffset] = D_USE_CONTINUOUSLOD ? ClusterRadiusScale : 0;
 		}
 	}

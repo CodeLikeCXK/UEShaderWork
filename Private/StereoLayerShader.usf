@@ -31,21 +31,13 @@ void MainVS(
 
 Texture2D InTexture;
 SamplerState InTextureSampler;
-float InIsOpaque;
-
-float CalculateAlpha(float4 OutColor)
-{
-	// Don't export alpha for opaque layers
-	return (OutColor.a * (1.0 - InIsOpaque) + InIsOpaque);
-}
 
 void MainPS_Texture2D(
 	    float2 UV       : TEXCOORD0,
 	out float4 OutColor : SV_Target0
 	)
 {
-	OutColor = Texture2DSample(InTexture, InTextureSampler, UV);
-	OutColor.a = CalculateAlpha(OutColor);
+    OutColor = Texture2DSample(InTexture, InTextureSampler, UV);
 }
 
 TextureExternal InExternalTexture;
@@ -55,6 +47,5 @@ void MainPS_TextureExternal(
 	out float4 OutColor : SV_Target0
 	)
 {
-	OutColor = TextureExternalSample(InExternalTexture, InTextureSampler, UV);
-	OutColor.a = CalculateAlpha(OutColor);
+    OutColor = TextureExternalSample(InExternalTexture, InTextureSampler, UV);
 }

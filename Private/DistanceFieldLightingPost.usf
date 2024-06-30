@@ -8,7 +8,6 @@
 #include "DeferredShadingCommon.ush"
 #include "DistanceFieldLightingShared.ush"
 #include "DistanceFieldAOShared.ush"
-#include "ScreenPass.ush"
 
 Texture2D BentNormalHistoryTexture;
 SamplerState BentNormalHistorySampler;
@@ -26,10 +25,12 @@ SamplerState VelocityTextureSampler;
 
 float ComputeHistoryWeightBasedOnPosition(float2 ScreenPosition, float SceneDepth, float2 OldScreenPosition, float HistoryCameraDepth)
 {
-	float3 TranslatedWorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-	float3 PrevPositionTranslatedWorld = mul(float4(OldScreenPosition * HistoryCameraDepth, HistoryCameraDepth, 1), View.PrevScreenToTranslatedWorld).xyz;
+	float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), View.ScreenToWorld).xyz;
 
-	float DistanceToHistoryValue = length(PrevPositionTranslatedWorld - TranslatedWorldPosition);
+	float3 PrevPositionTranslatedWorld = mul(float4(OldScreenPosition * HistoryCameraDepth, HistoryCameraDepth, 1), View.PrevScreenToTranslatedWorld).xyz;
+	float3 PrevWorldPosition = PrevPositionTranslatedWorld - View.PrevPreViewTranslation;
+
+	float DistanceToHistoryValue = length(PrevWorldPosition - WorldPosition);
 	float RelativeHistoryDistanceThreshold = HistoryDistanceThreshold / 1000.0f;
 
 	return DistanceToHistoryValue / SceneDepth > RelativeHistoryDistanceThreshold ? 0.0f : 1.0f;
@@ -38,8 +39,7 @@ float ComputeHistoryWeightBasedOnPosition(float2 ScreenPosition, float SceneDept
 float2 DistanceFieldGBufferTexelSize;
 float2 DistanceFieldGBufferJitterOffset;
 float4 BentNormalBufferAndTexelSize;
-
-FScreenTransform UVToScreenPos;
+float MinDownsampleFactorToBaseLevel;
 
 float4 GetNormalWeights(float2 Corner00UV, float2 LowResTexelSize, float3 WorldNormal)
 {
@@ -78,10 +78,10 @@ float4 GetNormalWeights(float2 Corner00UV, float2 LowResTexelSize, float3 WorldN
 
 float ComputeSampleWeightBasedOnPosition(float4 ReferencePlane, float2 SampleScreenUV, float SampleDepth)
 {
-	float2 SampleScreenPosition = ApplyScreenTransform(SampleScreenUV, UVToScreenPos);
-	float3 SampleTranslatedWorldPosition = mul(float4(SampleScreenPosition * SampleDepth, SampleDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	float2 SampleScreenPosition = (SampleScreenUV.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 SampleWorldPosition = mul(float4(SampleScreenPosition * SampleDepth, SampleDepth, 1), View.ScreenToWorld).xyz;
 
-	float PlaneDistance = dot(ReferencePlane, float4(SampleTranslatedWorldPosition, 1));
+	float PlaneDistance = dot(ReferencePlane, float4(SampleWorldPosition, 1));
 
 	float Epsilon = .0001f;
 	float RelativeDistance = 1000 * abs(PlaneDistance) / SampleDepth;
@@ -94,9 +94,9 @@ void GeometryAwareUpsample(float4 UVAndScreenPos, out float4 OutBentNormal)
 	float SceneDepth;
 	GetDownsampledGBuffer(UVAndScreenPos.xy, WorldNormal, SceneDepth);
 
-	float3 TranslatedWorldPosition = mul(float4(UVAndScreenPos.zw * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	float3 WorldPosition = mul(float4(UVAndScreenPos.zw * SceneDepth, SceneDepth, 1), View.ScreenToWorld).xyz;
 
-	float4 ReferencePlane = float4(WorldNormal, -dot(TranslatedWorldPosition, WorldNormal));
+	float4 ReferencePlane = float4(WorldNormal, -dot(WorldPosition, WorldNormal));
 
 	float2 LowResBufferSize = BentNormalBufferAndTexelSize.xy;
 	float2 LowResTexelSize = BentNormalBufferAndTexelSize.zw;
@@ -311,6 +311,7 @@ void FilterHistoryPS(
 		float SceneDepth = abs(HistoryValue.w);
 
 		float4 Accumulation = 0;
+		float3 IrradianceAccumulation = 0;
 
 		for (float y = -HALF_HISTORY_FILL_KERNEL_SIZE; y <= HALF_HISTORY_FILL_KERNEL_SIZE; y++)
 		{
@@ -343,7 +344,7 @@ void FilterHistoryPS(
 		}
 
 		// Only change the history value if the spatial search turned up something applicable
-		if (Accumulation.a > 0.01f)
+		if (Accumulation.a > 0)
 		{
 			float InvWeight = 1.0f / Accumulation.a;
 			// Construct the history value as if the spatial search result was the previous history, 

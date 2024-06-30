@@ -4,8 +4,6 @@
 	SkyLightingShared.usf
 =============================================================================*/
 
-#pragma once
-
 float ApproximateConeConeIntersection(float ArcLength0, float ArcLength1, float AngleBetweenCones)
 {
 	float AngleDifference = abs(ArcLength0 - ArcLength1);

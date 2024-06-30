@@ -1,9 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#pragma once
-
 /*=============================================================================
-	DepthOfFieldCommon.ush: depth of field common
+	DepthOfFieldCommon.usf: depth of field common
 =============================================================================*/
 
 // [0] .x:SkyFocusDistance or very value if 0, .y:DepthOfFieldVignetteMul, .z:DepthOfFieldVignetteAdd, w:OcclusionTweak1

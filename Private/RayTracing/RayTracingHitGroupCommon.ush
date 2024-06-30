@@ -44,23 +44,28 @@ uint3 LoadIndices32Bit(ByteAddressBuffer SourceBuffer, uint OffsetInBytes)
 	return SourceBuffer.Load3(OffsetInBytes);
 }
 
-float3 LoadVertexPositionFloat3(ByteAddressBuffer SourceBuffer, uint BaseOffsetInBytes, uint Index, uint StrideInBytes)
+float3 LoadVertexPositionFloat3(ByteAddressBuffer SourceBuffer, uint Index, uint StrideInBytes)
 {
-	uint OffsetInBytes = BaseOffsetInBytes + Index * StrideInBytes;
+	uint OffsetInBytes = Index * StrideInBytes;
 	return asfloat(SourceBuffer.Load3(OffsetInBytes));
 }
 
 // Explicitly declare "system" resources that will be available to all hit group shaders.
 
-FTriangleBaseAttributes LoadTriangleBaseAttributes(
-	ByteAddressBuffer IndexBuffer, uint IndexBufferOffsetInBytes, uint IndexBufferStride, 
-	ByteAddressBuffer VertexBuffer, uint VertexBufferOffsetInBytes, uint VertexBufferStride, 
-	uint PrimitiveId)
+struct FTriangleBaseAttributes
+{
+	uint3 Indices;
+	float3 LocalPositions[3];
+};
+
+FTriangleBaseAttributes LoadTriangleBaseAttributes(uint PrimitiveId)
 {
 	FTriangleBaseAttributes Result = (FTriangleBaseAttributes)0;
 
 	// Fetch vertex indices and positions, then compute local space normal and transform it to world space
 
+	const uint IndexBufferOffsetInBytes = HitGroupSystemRootConstants.IndexBufferOffsetInBytes;
+	const uint IndexBufferStride = HitGroupSystemRootConstants.GetIndexStride();
 	const uint BaseIndex = PrimitiveId * 3;
 
 	if (IndexBufferStride == 0)
@@ -70,29 +75,22 @@ FTriangleBaseAttributes LoadTriangleBaseAttributes(
 	}
 	else if (IndexBufferStride == 2)
 	{
-		Result.Indices = LoadIndices16Bit(IndexBuffer, IndexBufferOffsetInBytes + BaseIndex * IndexBufferStride);
+		Result.Indices = LoadIndices16Bit(HitGroupSystemIndexBuffer, IndexBufferOffsetInBytes + BaseIndex * IndexBufferStride);
 	}
 	else
 	{
-		Result.Indices = LoadIndices32Bit(IndexBuffer, IndexBufferOffsetInBytes + BaseIndex * IndexBufferStride);
+		Result.Indices = LoadIndices32Bit(HitGroupSystemIndexBuffer, IndexBufferOffsetInBytes + BaseIndex * IndexBufferStride);
 	}
 
 	// Fetch vertex positions (in local space)
+	const uint VertexStride = HitGroupSystemRootConstants.GetVertexStride();
+
 	// #dxr_todo: UE-72160 handle various vertex formats, for now only supporting float3
-	Result.LocalPositions[0] = LoadVertexPositionFloat3(VertexBuffer, VertexBufferOffsetInBytes, Result.Indices[0], VertexBufferStride);
-	Result.LocalPositions[1] = LoadVertexPositionFloat3(VertexBuffer, VertexBufferOffsetInBytes, Result.Indices[1], VertexBufferStride);
-	Result.LocalPositions[2] = LoadVertexPositionFloat3(VertexBuffer, VertexBufferOffsetInBytes, Result.Indices[2], VertexBufferStride);
+	Result.LocalPositions[0] = LoadVertexPositionFloat3(HitGroupSystemVertexBuffer, Result.Indices[0], VertexStride);
+	Result.LocalPositions[1] = LoadVertexPositionFloat3(HitGroupSystemVertexBuffer, Result.Indices[1], VertexStride);
+	Result.LocalPositions[2] = LoadVertexPositionFloat3(HitGroupSystemVertexBuffer, Result.Indices[2], VertexStride);
 
 	return Result;
-}
-
-FTriangleBaseAttributes LoadTriangleBaseAttributes(uint PrimitiveId)
-{
-	uint IndexBufferOffsetInBytes = HitGroupSystemRootConstants.IndexBufferOffsetInBytes;
-	uint IndexBufferStride = HitGroupSystemRootConstants.GetIndexStride();
-	uint VertexStride = HitGroupSystemRootConstants.GetVertexStride();
-	uint VertexBufferOffsetInBytes = 0; // Base offset is already applied when the buffer is bound to the hit group
-	return LoadTriangleBaseAttributes(HitGroupSystemIndexBuffer, IndexBufferOffsetInBytes, IndexBufferStride, HitGroupSystemVertexBuffer, VertexBufferOffsetInBytes, VertexStride, PrimitiveId);
 }
 
 uint GetInstanceUserData()
@@ -108,21 +106,6 @@ uint GetHitGroupUserData()
 uint GetBaseInstanceIndex()
 {
 	return HitGroupSystemRootConstants.BaseInstanceIndex;
-}
-
-float3 GetGeometryNormalFromTriangleBaseAttributes(uint PrimitiveIndex)
-{
-	FTriangleBaseAttributes Tri = LoadTriangleBaseAttributes(PrimitiveIndex);
-
-	float3 LocalEdges[2] = {
-		Tri.LocalPositions[1] - Tri.LocalPositions[0],
-		Tri.LocalPositions[2] - Tri.LocalPositions[0]
-	};
-	float3 LocalNormal = cross(LocalEdges[1], LocalEdges[0]);
-
-	float3x3 InverseTranspose3x3 = transpose((float3x3)WorldToObject4x3());
-	float3 WorldNormal = normalize(mul(LocalNormal, InverseTranspose3x3));
-	return WorldNormal;
 }
 
 #endif // RAYTRACINGHITGROUPCOMMON_USH_INCLUDED // Workarround for UE-66460

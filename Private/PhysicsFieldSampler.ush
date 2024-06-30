@@ -19,7 +19,9 @@
 	#define PhysicsFieldClipmapExponent			View.PhysicsFieldClipmapExponent
 	#define PhysicsFieldClipmapCount			View.PhysicsFieldClipmapCount
 	#define PhysicsFieldTargetCount				View.PhysicsFieldTargetCount
-	#define PhysicsFieldTargets					View.PhysicsFieldTargets
+	#define PhysicsFieldVectorTargets			View.PhysicsFieldVectorTargets
+	#define PhysicsFieldScalarTargets			View.PhysicsFieldScalarTargets
+	#define PhysicsFieldIntegerTargets			View.PhysicsFieldIntegerTargets
 #else
 	Buffer<float> PhysicsFieldClipmapBuffer;
 	float3		PhysicsFieldClipmapCenter;
@@ -28,24 +30,26 @@
 	int			PhysicsFieldClipmapExponent;
 	int			PhysicsFieldClipmapCount;
 	int			PhysicsFieldTargetCount;
-	int4		PhysicsFieldTargets[MAX_PHYSICS_FIELD_TARGETS]; // x (Vector), y (Scalar), z (Integer), w (Padding)
+	int			PhysicsFieldVectorTargets[MAX_PHYSICS_FIELD_TARGETS];
+	int			PhysicsFieldScalarTargets[MAX_PHYSICS_FIELD_TARGETS];
+	int			PhysicsFieldIntegerTargets[MAX_PHYSICS_FIELD_TARGETS];
 #endif
 
 float3 MatPhysicsField_SamplePhysicsVectorField(float3 WorldPosition, int VectorTarget)
 {
-	return PhysicsField_SamplePhysicsVectorField(WorldPosition, VectorTarget, PhysicsFieldTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
+	return PhysicsField_SamplePhysicsVectorField(WorldPosition, VectorTarget, PhysicsFieldVectorTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
 				PhysicsFieldClipmapExponent, PhysicsFieldClipmapCount, PhysicsFieldClipmapResolution, PhysicsFieldClipmapBuffer);
 }
 
 float MatPhysicsField_SamplePhysicsScalarField(float3 WorldPosition, int ScalarTarget)
 {
-	return PhysicsField_SamplePhysicsScalarField(WorldPosition, ScalarTarget, PhysicsFieldTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
+	return PhysicsField_SamplePhysicsScalarField(WorldPosition, ScalarTarget, PhysicsFieldScalarTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
 				PhysicsFieldClipmapExponent, PhysicsFieldClipmapCount, PhysicsFieldClipmapResolution, PhysicsFieldClipmapBuffer);
 }
 
 int MatPhysicsField_SamplePhysicsIntegerField(float3 WorldPosition, int IntegerTarget)
 {
-	return PhysicsField_SamplePhysicsIntegerField(WorldPosition, IntegerTarget, PhysicsFieldTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
+	return PhysicsField_SamplePhysicsIntegerField(WorldPosition, IntegerTarget, PhysicsFieldIntegerTargets, PhysicsFieldTargetCount, PhysicsFieldClipmapCenter, PhysicsFieldClipmapDistance,
 				PhysicsFieldClipmapExponent, PhysicsFieldClipmapCount, PhysicsFieldClipmapResolution, PhysicsFieldClipmapBuffer);
 	
 }

@@ -114,7 +114,7 @@
 #define USE_NORMALS 1
 
 // -----------------------------------------------------------------------------------------------------------------------------
-
+// To be included after defines
 #include "PostProcessAmbientOcclusionCommon.ush"
 
 // -----------------------------------------------------------------------------------------------------------------------------
@@ -124,19 +124,15 @@
 float4 FadeRadiusMulAdd_FadeDistance_AttenFactor;
 float4 WorldRadiusAdj_SinDeltaAngle_CosDeltaAngle_Thickness;
 
-float4 Power_Intensity_ScreenPixelsToSearch;
-float4 DepthBufferSizeAndInvSize;
-float4 BufferSizeAndInvSize;
-float4 ViewSizeAndInvSize;
-float4 ViewRectMin;
+half4 Power_Intensity_ScreenPixelsToSearch;
+half4 DepthBufferSizeAndInvSize;
+half4 BufferSizeAndInvSize;
+half4 ViewSizeAndInvSize;
+half4 ViewRectMin;
 
 half2 TexturePosToBufferUV(int2 TexturePos)
 {
-#if HORIZONSEARCH_INTEGRAL_PIXEL_SHADER || SPATIALFILTER_PIXEL_SHADER
-	half2 BufferUV = (TexturePos + half2(0.5f, 0.5f)) * BufferSizeAndInvSize.zw;
-#else
 	half2 BufferUV = (TexturePos + half2(0.5f, 0.5f) + ViewRectMin.xy) * BufferSizeAndInvSize.zw;
-#endif
 
 	return BufferUV;
 }
@@ -596,7 +592,7 @@ half4 GTAOSpatialFilter(half2 TextureUV, int2 ThreadPos, int2 PixelPos)
 void GTAOSpatialFilter(int2 ThreadPos, int2 PixelPos)
 #endif
 {
-	if (any(PixelPos >= int2(ViewRectMin.xy + ViewSizeAndInvSize.xy)))
+	if (any(PixelPos >= (int2)ViewSizeAndInvSize.xy))
 	{
 #if SPATIALFILTER_PIXEL_SHADER || HORIZONSEARCH_INTEGRAL_PIXEL_SHADER
 		return 1.0f;
@@ -767,7 +763,7 @@ void GTAOSpatialFilter(int2 ThreadPos, int2 PixelPos)
 #if SPATIALFILTER_PIXEL_SHADER || HORIZONSEARCH_INTEGRAL_PIXEL_SHADER
 	return SumAO;
 #else
-	OutTexture[PixelPos + ViewRectMin.xy] = SumAO;
+	OutTexture[PixelPos] = SumAO;
 #endif
 }
 #endif
@@ -784,7 +780,7 @@ void GTAOHorizonSearchIntegralSpatialFilterCS(
 	, out uint LayerIndex : SV_RenderTargetArrayIndex
 #elif MOBILE_MULTI_VIEW
 	, in uint ViewId : SV_ViewID
-	, out nointerpolation uint MultiViewIndex : VIEW_ID
+	, out float MultiViewIndex : VIEW_ID
 #endif
 )
 {
@@ -793,8 +789,14 @@ void GTAOHorizonSearchIntegralSpatialFilterCS(
 	ResolvedView = ResolveView(EyeIndex);
 	LayerIndex = EyeIndex;
 #elif MOBILE_MULTI_VIEW
+#if COMPILER_GLSL_ES3_1
+	const int MultiViewId = int(ViewId);
+	ResolvedView = ResolveView(uint(MultiViewId));
+	MultiViewIndex = float(MultiViewId);
+#else
 	ResolvedView = ResolveView(ViewId);
-	MultiViewIndex = ViewId;
+	MultiViewIndex = float(ViewId);
+#endif
 #else
 	ResolvedView = ResolveView();
 #endif
@@ -849,7 +851,7 @@ void GTAOHorizonSearchIntegralCS(
 	, out uint LayerIndex : SV_RenderTargetArrayIndex
 #elif MOBILE_MULTI_VIEW
 	, in uint ViewId : SV_ViewID
-	, out nointerpolation uint MultiViewIndex : VIEW_ID
+	, out float MultiViewIndex : VIEW_ID
 #endif
 )
 {
@@ -858,8 +860,14 @@ void GTAOHorizonSearchIntegralCS(
 	ResolvedView = ResolveView(EyeIndex);
 	LayerIndex = EyeIndex;
 #elif MOBILE_MULTI_VIEW
+#if COMPILER_GLSL_ES3_1
+	const int MultiViewId = int(ViewId);
+	ResolvedView = ResolveView(uint(MultiViewId));
+	MultiViewIndex = float(MultiViewId);
+#else
 	ResolvedView = ResolveView(ViewId);
-	MultiViewIndex = ViewId;
+	MultiViewIndex = float(ViewId);
+#endif
 #else
 	ResolvedView = ResolveView();
 #endif
@@ -892,7 +900,7 @@ void GTAOHorizonSearchIntegralCS(
 
 	half4 EncodeZ = EncodeFloatRGBA(DeviceZ);
 	EncodeZ.a = GTAO;
-	OutTexture[TexturePos + ViewRectMin.xy] = EncodeZ;
+	OutTexture[TexturePos] = EncodeZ;
 }
 #endif
 
@@ -931,7 +939,7 @@ void GTAOSpatialFilterCS(
 void GTAOHorizonSearchIntegralPS(
 	float4 InUVPos : TEXCOORD0,
 	in float4 SvPosition : SV_Position,
-	out HALF4_TYPE OutColor : SV_Target0
+	out half4 OutColor : SV_Target0
 )
 {
 	ResolvedView = ResolveView();
@@ -950,7 +958,7 @@ void GTAOHorizonSearchIntegralPS(
 void GTAOSpatialFilterPS(
 	float4 InUVPos : TEXCOORD0,
 	in float4 SvPosition : SV_Position, 
-	out HALF4_TYPE OutColor : SV_Target0)
+	out half4 OutColor : SV_Target0)
 {
 	ResolvedView = ResolveView();
 
@@ -1138,6 +1146,7 @@ void MainPSandCS(in float4 UVAndScreenPos, float4 SvPosition, out float4 OutColo
 		// recombined result from multiple resolutions
 		OutColor.r = lerp(OutColor.r, Filtered.r, ComputeLerpFactor());
 	}
+	return;//
 
 	if(!bDebugLookups)
 	{

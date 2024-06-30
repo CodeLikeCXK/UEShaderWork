@@ -48,10 +48,8 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	const float PrecisionScale = 1000.f;
-	const uint PackedHairViewTransmittance = HairCountTexture.Load(uint3(PixelCoord, 0));
-	const float LogViewTransmittance = -float(PackedHairViewTransmittance) / PrecisionScale;
-	const float ViewTransmittance = exp2(LogViewTransmittance);
-	OutputTexture[PixelCoord] = ViewTransmittance;
+	const uint PackedCoverage = HairCountTexture.Load(uint3(PixelCoord, 0));
+	const float AccCoverage = UnpackCoverageAndHairCount(PackedCoverage);
+	OutputTexture[PixelCoord] = saturate(1 - saturate(AccCoverage));
 }
 #endif

@@ -45,13 +45,13 @@ void CompositeMain(
 
 	float4 Radiance = RadianceTexture.Load(TexCoord);
 
-	OutColor = float4(Radiance.rgb * View.PreExposure, Radiance.a);
+	OutColor = float4(Radiance.rgb * View.PreExposure, 1.0);
 
 	if (ProgressDisplayEnabled && (Iteration + 1) < MaxSamples)
 	{
 		// Draw a progress meter for how far along we are to the max number of passes
 		float Aspect = View.BufferSizeAndInvSize.y * View.BufferSizeAndInvSize.z;
-		float Size = 50.0 * View.BufferSizeAndInvSize.z;
+		float Size = 50.0 * View.BufferSizeAndInvSize.zz;
 		float2 P = float2(UV.x, UV.y * Aspect);
 		float2 RectMin = View.ViewRectMin.xy;
 		float2 RectMax = View.ViewRectMin.xy + View.ViewSizeAndInvSize.xy;
@@ -100,7 +100,13 @@ void CompositeMain(
     // split-screen debugging aids
 	if (UV.x < 0.5)
 	{
-		OutColor = 1 - Radiance.a; // visualize alpha channel
+		uint NumSamples = Iteration + 1;
+		float OutVariance = Radiance.a;
+		float Lum = Luminance(Radiance.rgb); // mean
+		float StdErr = NumSamples > 0 ? sqrt(OutVariance / NumSamples) : 0; // stderr
+		//OutColor = Tonemap(Lum + 3 * StdErr) - Tonemap(max(Lum - 3 * StdErr, 0.0)); // error estimator
+		OutColor = StdErr * View.PreExposure;
+		//OutColor = StdErr / (Lum + 0.0001) * View.PreExposure;
 	}
 #endif
 }

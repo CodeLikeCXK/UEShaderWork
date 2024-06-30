@@ -8,13 +8,11 @@ uniform mat4 ViewProjectionMatrix;
 attribute vec4 InTexCoords;
 attribute vec2 InPosition;
 attribute vec4 InColor;
-attribute vec4 InSecondaryColor;
 
 // Between vertex and pixel shader
 varying vec4 Position;
 varying vec4 TexCoords;
 varying vec4 Color;
-varying vec4 SecondaryColor;
 
 vec3 powScalar(vec3 values, float power)
 {
@@ -40,9 +38,6 @@ void main()
 
 	Color.rgb = sRGBToLinear(InColor.rgb);
 	Color.a = InColor.a;
-
-	SecondaryColor.rgb = sRGBToLinear(InSecondaryColor.rgb);
-	SecondaryColor.a = InSecondaryColor.a;
 
     Position = vec4( InPosition, 0, 1 );
     

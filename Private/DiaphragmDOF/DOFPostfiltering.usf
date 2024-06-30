@@ -15,6 +15,7 @@
 
 uint4 ViewportRect;
 float2 MaxInputBufferUV;
+float MinGatherRadius;
 
 
 float4 ConvolutionInputSize;
@@ -179,7 +180,9 @@ void PostfilterMainCS(
 			TileClassification_Background,
 			TilePos);
 
-		FGatheringTileSuggestion TileSuggestion = InferGatherTileSuggestion(CocTileInfos, /* LayerProcessing = */ DIM_LAYER_PROCESSING);
+		FGatheringTileSuggestion TileSuggestion = InferGatherTileSuggestion(CocTileInfos,
+			/* LayerProcessing = */ DIM_LAYER_PROCESSING,
+			/* MinGatherRadius = */ MinGatherRadius);
 
 		bEarlyReturn = TileSuggestion.bCanEarlyReturn;
 	}

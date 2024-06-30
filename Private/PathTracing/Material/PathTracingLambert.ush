@@ -6,39 +6,36 @@ PathTracingLambert.usf: Lambertian BRDF sampling functions
 #pragma once
 
 FMaterialSample Lambert_SampleMaterial(
-	FPathTracingPayload Payload,
-	float3 RandSample)
+	FMaterialClosestHitPayload Payload,
+	float4 RandSample)
 {
-	float3 N_World = Payload.WorldNormal;
+	float3 N_World = GetWorldNormal(Payload);
 
 	float4 SampledValue = CosineSampleHemisphere(RandSample.xy);
 
-	float3 L_World = TangentToWorld(SampledValue.xyz, N_World);
-
-	return CreateMaterialSample(L_World, Payload.GetBSDFOpacity() * Payload.BaseColor * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal), SampledValue.w, 1.0, 1.0, PATHTRACER_SCATTER_DIFFUSE);
+	return CreateMaterialSample(TangentToWorld(SampledValue.xyz, N_World), GetBaseColor(Payload), SampledValue.w, 1.0, 1.0);
 }
 
 FMaterialEval Lambert_EvalMaterial(
-	float3 L_World,
-	FPathTracingPayload Payload,
-	float2 DiffuseSpecularScale
+	float3 OutgoingDirection,
+	FMaterialClosestHitPayload Payload
 )
 {
-	float3 N_World = Payload.WorldNormal;
-	float NoL = saturate(dot(N_World, L_World));
+	float3 N_World = GetWorldNormal(Payload);
+	float NoL = saturate(dot(N_World, OutgoingDirection));
 
-	return CreateMaterialEval(Payload.GetBSDFOpacity() * Payload.BaseColor * ShadowTerminatorTerm(L_World, Payload.WorldNormal, Payload.WorldSmoothNormal) * DiffuseSpecularScale.x, NoL / PI);
+	return CreateMaterialEval(GetBaseColor(Payload), NoL / PI);
 }
 
 
 FMaterialSample Simplified_SampleMaterial(
-	FPathTracingPayload Payload,
-	float3 RandSample)
+	FMaterialClosestHitPayload Payload,
+	float4 RandSample)
 {
-	float3 N_World = Payload.WorldNormal;
+	float3 N_World = GetWorldNormal(Payload);
 
-	float3 FrontColor = Payload.BaseColor;
-	float3 BackColor = Payload.SubsurfaceColor;
+	float3 FrontColor = GetBaseColor(Payload);
+	float3 BackColor = Payload.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE ? GetSubsurfaceColor(Payload) : 0.0;
 
 	float4 SampledValue = CosineSampleHemisphere(RandSample.xy);
 
@@ -47,21 +44,19 @@ FMaterialSample Simplified_SampleMaterial(
 	float3 Weight = bDoTransmission ? BackColor / TransmissionProb : FrontColor / (1 - TransmissionProb);
 	float Pdf = SampledValue.w * (bDoTransmission ? TransmissionProb : 1.0 - TransmissionProb);
 
-	Weight *= Payload.GetBSDFOpacity();
-	float Sign = bDoTransmission ? -1.0 : 1.0;
-	return CreateMaterialSample(TangentToWorld(SampledValue.xyz, N_World * Sign), Weight, Pdf, Sign, 1.0, PATHTRACER_SCATTER_DIFFUSE);
+	return CreateMaterialSample(TangentToWorld(SampledValue.xyz, N_World * (bDoTransmission ? -1.0 : 1.0)), Weight, Pdf, 1.0, 1.0);
 }
 
 FMaterialEval Simplified_EvalMaterial(
-	float3 L_World,
-	FPathTracingPayload Payload
+	float3 OutgoingDirection,
+	FMaterialClosestHitPayload Payload
 )
 {
-	float3 N_World = Payload.WorldNormal;
-	float NoL = dot(N_World, L_World);
+	float3 N_World = GetWorldNormal(Payload);
+	float NoL = dot(N_World, OutgoingDirection);
 
-	float3 FrontColor = Payload.BaseColor;
-	float3 BackColor = Payload.SubsurfaceColor;
+	float3 FrontColor = GetBaseColor(Payload);
+	float3 BackColor = Payload.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE ? GetSubsurfaceColor(Payload) : 0.0;
 	float TransmissionProb = LobeSelectionProb(BackColor, FrontColor);
 
 	float3 Weight = NoL < 0.0 ? BackColor : FrontColor;
@@ -70,6 +65,5 @@ FMaterialEval Simplified_EvalMaterial(
 	{
 		Weight /= Pdf;
 	}
-	Weight *= Payload.GetBSDFOpacity();
 	return CreateMaterialEval(Weight, Pdf * saturate(abs(NoL)) / PI);
 }

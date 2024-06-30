@@ -3896,8 +3896,6 @@ uint4 AmdExtD3DShaderIntrinsics_WavePostfixMax(uint4 src)
 }
 
 
-#if defined (AGS_RAY_HIT_TOKEN)
-
 //=====================================================================================================================
 struct AmdExtRtHitToken
 {
@@ -3988,6 +3986,5 @@ TraceRay(accelStruct,                               \
          ray,                                       \
          payload);                                  \
 
-#endif // AGS_RAY_HIT_TOKEN
 
 #endif // _AMDEXTD3DSHADERINTRINICS_HLSL

@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#pragma once 
-
 /*=============================================================================
 	TransmissionThickness.ush: Calc Transmission Thickness shaders.
 =============================================================================*/
@@ -97,34 +95,48 @@ float2(0.865413, 0.763726),
 float2(0.872005, -0.927)
 };
 
+// Normalized(1.0f / (4 * PI))
+#define ISO_PHASE_FUNC_Normalized ( 0.5f )
+#define Light_Intensity_Blit (2.0f) 
+float ApproximateHG(float cosJ, float g)		// HG phase function approximated
+{
+	float g2 = g * g;
+	float gcos2 = 1.0f - (g * cosJ);
+	gcos2 *= gcos2;
+
+	return (Light_Intensity_Blit * ISO_PHASE_FUNC_Normalized * (1.0f - g2) / gcos2);
+}
+
 float CalcShadowLinearDepth(float shadowDepth, float2 param)
 {
 	return 1.0f / (shadowDepth * param.x - param.y);
 }
 
-float CalculateThickness(float ShadowmapDepth, float SceneDepth, float DensityMulConstant, float NormalScale, float NoL)
+float CalculateThickness(float ShadowmapDepth, FPCFSamplerSettings Settings, float NormalScale, float NoL)
 {
 	// Determine the distance that the light traveled through the subsurface object
 	// This assumes that anything between this subsurface pixel and the light was also a subsurface material,
 	// As a result, subsurface materials receive leaked light based on how transparent they are
-	float Thickness = (SceneDepth - ShadowmapDepth) * DensityMulConstant;
+	float Thickness = (Settings.SceneDepth - ShadowmapDepth) * Settings.DensityMulConstant;
 	Thickness = clamp(abs(Thickness > 0 ? Thickness + NormalScale : max(0.0, Thickness * NoL + NormalScale)), 0.15, 5) + 0.25;
 	// Never shadow from depths that were never written to (max depth value)
 	return Thickness;
 }
 
-float CalcTransmissionThickness(float3 ViewPos, float3 LightPos, float3 WorldNormal, FTransmissionProfileParams TransmissionParams, FPCFSamplerSettings Settings)
+float CalcTransmissionThickness(float3 ViewPos, float3 LightPos, FGBufferData GBufferData, FPCFSamplerSettings Settings)
 {
 	///Get -NoL, maybe unnecessary.
-	float4 HomogeneousWorldPosition = mul(float4(ViewPos.xyz, 1), LWCHackToFloat(PrimaryView.ScreenToWorld));
+	float4 HomogeneousWorldPosition = mul(float4(ViewPos.xyz, 1), View.ScreenToWorld);
 	float3 WorldPosition = HomogeneousWorldPosition.xyz / HomogeneousWorldPosition.w;
 	float3 ToLight = LightPos.xyz - WorldPosition;
 	float DistanceSqr = dot(ToLight, ToLight);
 	float3 L = ToLight * rsqrt(DistanceSqr);
-	float NoL = 1;// dot(-L, WorldNormal);
+	float NoL = 1;// dot(-L, GBufferData.WorldNormal);
+
+	FTransmissionProfileParams TransmissionParams = GetTransmissionProfileParams(GBufferData);
 
 	//Shrink Pos in View Space.
-	float3 ViewNormal = mul(WorldNormal, (float3x3)View.TranslatedWorldToView);
+	float3 ViewNormal = mul(GBufferData.WorldNormal, (float3x3)View.TranslatedWorldToView);
 
 	//Shrink world position with neg worldNormal to get thickness
 	//These scalar const is based on adjust expericence.
@@ -138,10 +150,10 @@ float CalcTransmissionThickness(float3 ViewPos, float3 LightPos, float3 WorldNor
 
 
 	ShrinkedScreenPos.xy = ShrinkedScreenPos.xy / ShrinkedScreenPos.w;
-	float DensityMulConstant = DepthScale * ProjectionDepthBiasParameters.w;
+	Settings.DensityMulConstant = DepthScale * ProjectionDepthBiasParameters.w;
 
 
-	Settings.SceneDepth = (1.0f - ShrinkedScreenPos.z) + ProjectionDepthBiasParameters.x;
+	Settings.SceneDepth = ShrinkedScreenPos.z + ProjectionDepthBiasParameters.x;
 	//Alpha is the thickness.
 
 	float ThicknessSum = 0.0;
@@ -153,7 +165,7 @@ float CalcTransmissionThickness(float3 ViewPos, float3 LightPos, float3 WorldNor
 		float2 DeltUv = PoissonDisk[i] * ShadowFilterRadius;
 		float2 ShadowUv = ShrinkedScreenPos.xy + DeltUv;
 		float ShadowmapDepth = Texture2DSampleLevel(Settings.ShadowDepthTexture, Settings.ShadowDepthTextureSampler, ShadowUv.xy, 0).r;
-		float Thickness = CalculateThickness(ShadowmapDepth, Settings.SceneDepth, DensityMulConstant, NormalScale, NoL);
+		float Thickness = CalculateThickness(ShadowmapDepth, Settings, NormalScale, NoL);
 		ThicknessSum += (Thickness);
 	}
 	float Thickness = ThicknessSum / SampleNum;
@@ -165,15 +177,17 @@ float CalcTransmissionThickness(float3 ViewPos, float3 LightPos, float3 WorldNor
 
 
 /** Computes thickness for a given world position from a cubemap shadowmap used on a point light. */
-float CalcTransmissionThickness(float3 WorldNormal, FTransmissionProfileParams TransmissionParams, float3 WorldSampleToLightVec, float2 ProjParam, float LightInvRadius, float DepthBias)
+float CalcTransmissionThickness(FGBufferData GBufferData, float3 WorldSampleToLightVec, float2 ProjParam, float LightInvRadius, float DepthBias)
 {
 	float Thickness = 1;
+
+	FTransmissionProfileParams TransmissionParams = GetTransmissionProfileParams(GBufferData);
 
 	float DepthScale = TransmissionParams.ExtinctionScale * 3.1f;
 	float NormalScale = TransmissionParams.NormalScale * 0.5;
 
 	//Shrink pos aligh -WorldNormal
-	float3 Normal = WorldNormal;
+	float3 Normal = GBufferData.WorldNormal;
 	float3 LightRelativeBiasedPosition = -WorldSampleToLightVec - Normal * NormalScale;
 	float DistanceSqr = dot(WorldSampleToLightVec, WorldSampleToLightVec);
 	float3 L = WorldSampleToLightVec * rsqrt(DistanceSqr);
@@ -195,9 +209,15 @@ float CalcTransmissionThickness(float3 WorldNormal, FTransmissionProfileParams T
 		float CompareDistance = ShadowPosition.z / ShadowPosition.w;
 		float ShadowDepthBias = -DepthBias / ShadowPosition.w;
 		
+		FPCFSamplerSettings Settings;
+
+		Settings.TransitionScale = SoftTransitionScale.z;
+		Settings.bSubsurface = true;
 		//Shadow Depth range Near to far, so no need mul far here.
-		float DensityMulConstant = TransmissionParams.ExtinctionScale * (10.0f / LightInvRadius);
-		float SceneDepth = CalcShadowLinearDepth(CompareDistance + ShadowDepthBias, ProjParam) * LightInvRadius;
+		Settings.DensityMulConstant = TransmissionParams.ExtinctionScale * (10.0f / LightInvRadius);
+		Settings.ProjectionDepthBiasParameters = ProjectionDepthBiasParameters.xw;
+		Settings.SceneDepth = 0.0f;
+		Settings.SceneDepth = CalcShadowLinearDepth(CompareDistance + ShadowDepthBias, ProjParam) * LightInvRadius;
 
 		Thickness = 0;
 
@@ -211,7 +231,7 @@ float CalcTransmissionThickness(float3 WorldNormal, FTransmissionProfileParams T
             float ShadowSample = TextureCubeSampleDepthLevel(ShadowDepthCubeTexture, ShadowDepthTextureSampler, SamplePos, 0.0);
 	#endif
 			float ShadowDepth = CalcShadowLinearDepth(ShadowSample, ProjParam) * LightInvRadius;
-			Thickness += CalculateThickness(ShadowDepth, SceneDepth, DensityMulConstant, NormalScale, NoL);
+			Thickness += CalculateThickness(ShadowDepth, Settings, NormalScale, NoL);
 		}
 		Thickness /= 5;
 

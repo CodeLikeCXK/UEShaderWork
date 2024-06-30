@@ -6,7 +6,6 @@
 #include "../MonteCarlo.ush"
 #include "../SceneTextureParameters.ush"
 #include "../ScreenSpaceDenoise/SSDPublic.ush"
-#include "../Strata/Strata.ush"
 
 // Generate vector truncation warnings to errors.
 #pragma warning(error: 3206)
@@ -28,7 +27,6 @@ SamplerState SceneColorSampler;
 Texture2D HZB;
 SamplerState HZBSampler;
 
-uint ShouldReflectOnlyWater;
 
 float GetRoughness(const in FGBufferData GBuffer)
 {
@@ -70,26 +68,13 @@ void ScreenSpaceReflectionsStencilPS(
 {
 	float2 UV = SvPosition.xy * View.BufferSizeAndInvSize.zw;
 	
-#if STRATA_ENABLED
-
-	uint2 PixelCoord = SvPosition.xy;
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
-
-	const float Roughness = TopLayerData.Roughness;
-	const bool bNoMaterial = !IsStrataMaterial(TopLayerData);
-
-#else // STRATA_ENABLED
-
 	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(UV);
+	
 	const float Roughness = GetRoughness(GBuffer);
-	const bool bNoMaterial = GBuffer.ShadingModelID == 0;
-
-#endif // STRATA_ENABLED
-
 	const float RoughnessFade = GetRoughnessFade(Roughness);
-
+	
 #if !defined(TILE_COMPUTE_SSR)
-	if (RoughnessFade > 0.0 && bNoMaterial)
+	if (RoughnessFade > 0.0 && GBuffer.ShadingModelID != 0)
 	{
 		// we are going to compute SSR for this pixel, so we discard this
 		// pixel shader invocation to not overwrite the stencil buffer and
@@ -97,7 +82,7 @@ void ScreenSpaceReflectionsStencilPS(
 		discard;
 	}
 #endif
-
+	
 	// we are not going to compute SSR for this pixel, so we clear the color
 	// since ScreenSpaceReflectionsPS() won't be executed in this pixel.
 	OutColor = 0;
@@ -126,37 +111,11 @@ void ScreenSpaceReflections(
 		OutClosestHitDistance = -2.0;
 	#endif
 
-#if STRATA_ENABLED
-
-	uint2 PixelCoord = SvPosition.xy;
-
-	float3 N = 0;
-	float Roughness = 0.0;
-	bool bNoMaterial = true;
-
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
-
-	// For now, SSR is only used to trace the top material layer.
-	N = TopLayerData.WorldNormal;
-	Roughness = TopLayerData.Roughness;
-	bNoMaterial = ShouldReflectOnlyWater ? !IsSingleLayerWaterMaterial(TopLayerData) : !IsStrataMaterial(TopLayerData);
-
-	float DeviceZ = SampleDeviceZFromSceneTextures(UV);
-	float SceneDepth = ConvertFromDeviceZ(DeviceZ);
-
-	const float3 PositionTranslatedWorld = mul(float4(ScreenPos * SceneDepth, SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-	const float3 V = normalize(View.TranslatedWorldCameraOrigin - PositionTranslatedWorld);
-
-	// STRATA_TODO Handle anisotropy using ModifyGGXAnisotropicNormalRoughness or similar approach. 
-	// Although the pass will be more expenssive if reading the material data itself, so this will need to be carefully measured on console.
-
-#else // STRATA_ENABLED
-
 	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(UV);
 
 	float3 N = GBuffer.WorldNormal;
 	const float SceneDepth = GBuffer.Depth;
-	const float3 PositionTranslatedWorld = mul(float4(ScreenPos * SceneDepth, SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+	const float3 PositionTranslatedWorld = mul( float4( ScreenPos * SceneDepth, SceneDepth, 1 ), View.ScreenToTranslatedWorld ).xyz;
 	const float3 V = normalize(View.TranslatedWorldCameraOrigin - PositionTranslatedWorld);
 
 #if SUPPORTS_ANISOTROPIC_MATERIALS
@@ -170,14 +129,10 @@ void ScreenSpaceReflections(
 #endif
 	
 	float Roughness = GetRoughness(GBuffer);
-	const bool bNoMaterial = GBuffer.ShadingModelID == 0;
-
-#endif // STRATA_ENABLED
-
 	float RoughnessFade = GetRoughnessFade(Roughness);
 
 	// Early out. Useless if using the stencil prepass.
-	BRANCH if( RoughnessFade <= 0.0 || bNoMaterial)
+	BRANCH if( RoughnessFade <= 0.0 || GBuffer.ShadingModelID == 0 )
 	{
 		return;
 	}
@@ -405,7 +360,9 @@ void ScreenSpaceReflections(
 	OutColor *= RoughnessFade;
 	OutColor *= SSRParams.r;
 
+#if USE_PREEXPOSURE
 	OutColor.rgb *= PrevSceneColorPreExposureCorrection;
+#endif
 	
 	// Output closest hit distance for denoiser.
 	#if SSR_OUTPUT_FOR_DENOISER

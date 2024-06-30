@@ -12,8 +12,7 @@ LightCommon.usf: Common utility functions for light sampling
 uint SceneLightCount;
 StructuredBuffer<FPathTracingLight> SceneLights;
 
-struct FLightHit
-{
+struct FLightHit {
 	float3 Radiance;
 	float Pdf;
 	float HitT;
@@ -22,102 +21,12 @@ struct FLightHit
 	bool IsHit() { return HitT > 0; }
 };
 
-struct FLightSample
-{
+struct FLightSample {
 	float3 RadianceOverPdf;
 	float Pdf;
 	float3 Direction;
 	float Distance;
 };
-
-
-struct FVolumeLightSampleSetup
-{
-	float VolumeTMin;      // range of 't' values along the ray that overlap the light (and the volume)
-	float VolumeTMax;
-
-	float LightImportance; // estimate of the light radiance for this ray (could be 0 if light does not support equi-angular sampling)
-
-	// Equi-Angular case
-	float T0;			   // distance from ray origin to projected light center
-	float Height;		   // distance from light center to ray (when negative, use uniform sampler)
-	float ThetaMin;        // angle to start of ray interval
-	float ThetaMax;        // angle to end of ray interval
-
-	float K;               // normalization constant for the pdf
-
-	bool IsValid() { return VolumeTMin < VolumeTMax; } // NOTE: we assume the range is a subset of the ray's TMin/TMax
-
-	float2 SampleDistance(float RandSample)
-	{
-		if (Height > 0)
-		{
-			// equi-angular pdf
-			const float TanTheta = tan(lerp(ThetaMin, ThetaMax, RandSample));
-			const float T = Height * TanTheta + T0;
-			const float PdfLocal = rcp((1 + TanTheta * TanTheta) * K);
-			return float2(T, PdfLocal);
-		}
-		else
-		{
-			// uniform pdf
-			const float T = lerp(VolumeTMin, VolumeTMax, RandSample);
-			const float PdfLocal = rcp(K);
-			return float2(T, PdfLocal);
-		}
-	}
-
-	float Pdf(float T)
-	{
-		if (T > VolumeTMin && T < VolumeTMax)
-		{
-			if (Height > 0)
-			{
-				const float TanTheta = (T - T0) / Height;
-				return rcp((1 + TanTheta * TanTheta) * K);
-			}
-			else
-			{
-				return rcp(K);
-			}
-		}
-		return 0.0;
-	}
-};
-
-FVolumeLightSampleSetup CreateEquiAngularSampler(float LightImportance, float3 Center, float3 Ro, float3 Rd, float TMin, float TMax)
-{
-#if 0
-	float T0 = dot(Center - Ro, Rd);
-	float3 P0 = Ro + T0 * Rd;
-	Center = Center - normalize(Center - P0);
-#endif
-	const float3 V = Center - Ro;
-	FVolumeLightSampleSetup Result = (FVolumeLightSampleSetup)0;
-	Result.VolumeTMin = TMin;
-	Result.VolumeTMax = TMax;
-	Result.T0 = dot(V, Rd);
-	Result.Height = length(cross(V, Rd));
-	Result.ThetaMin = Result.Height > 0 ? atan((TMin - Result.T0) / Result.Height) : 0.0;
-	Result.ThetaMax = Result.Height > 0 ? atan((TMax - Result.T0) / Result.Height) : 0.0;
-	Result.K = (Result.ThetaMax - Result.ThetaMin) * Result.Height;
-	Result.LightImportance = LightImportance * (TMax - TMin);
-	return Result;
-}
-
-FVolumeLightSampleSetup CreateUniformSampler(float LightImportance, float TMin, float TMax)
-{
-	FVolumeLightSampleSetup Result = (FVolumeLightSampleSetup)0;
-	Result.VolumeTMin = TMin;
-	Result.VolumeTMax = TMax;
-	Result.LightImportance = LightImportance * (TMax - TMin);
-	Result.Height = -1.0; // mark that we don't want equi-angular sampling here
-	Result.K = TMax - TMin;
-	return Result;
-}
-
-
-
 
 FLightHit NullLightHit()
 {
@@ -146,11 +55,6 @@ FLightSample CreateLightSample(float3 RadianceOverPdf, float Pdf, float3 Directi
 	Sample.Direction = Direction;
 	Sample.Distance = Distance;
 	return Sample;
-}
-
-FVolumeLightSampleSetup NullVolumeLightSetup()
-{
-	return (FVolumeLightSampleSetup)0;
 }
 
 bool IsEnvironmentLight(int LightId)
@@ -184,12 +88,9 @@ bool IsPhysicalLight(int LightId)
 	return IsEnvironmentLight(LightId);
 }
 
-float3 GetTranslatedPosition(int LightId)
+float3 GetPosition(int LightId)
 {
-	//const FLWCVector3 WorldPosition = MakeLWCVector3(SceneLights[LightId].TilePosition, SceneLights[LightId].RelativeWorldPosition);
-	//return LWCToFloat(LWCAdd(WorldPosition, PreViewTranslation));
-
-	return SceneLights[LightId].TranslatedWorldPosition;
+	return SceneLights[LightId].Position;
 }
 
 float3 GetNormal(int LightId)
@@ -222,17 +123,9 @@ float2 GetRectSize(int LightId)
 	return SceneLights[LightId].Dimensions.xy;
 }
 
-float2 DecodeLightF16x2(uint Encoded)
-{
-	return float2(
-		f16tof32(Encoded),
-		f16tof32(Encoded >> 16)
-	);
-}
-
 float2 GetCosConeAngles(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].Shaping);
+	return SceneLights[LightId].Shaping;
 }
 
 float3 GetColor(int LightId)
@@ -245,9 +138,14 @@ float GetRadius(int LightId)
 	return SceneLights[LightId].Dimensions.x;
 }
 
-float GetSourceLength(int LightId)
+float GetSoftRadius(int LightId)
 {
 	return SceneLights[LightId].Dimensions.y;
+}
+
+float GetSourceLength(int LightId)
+{
+	return SceneLights[LightId].Dimensions.z;
 }
 
 float GetAttenuation(int LightId)
@@ -257,22 +155,12 @@ float GetAttenuation(int LightId)
 
 float GetRectLightBarnCosAngle(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].Shaping).x;
+	return SceneLights[LightId].Shaping.x;
 }
 
 float GetRectLightBarnLength(int LightId)
 {
-	return DecodeLightF16x2(SceneLights[LightId].Shaping).y;
-}
-
-float2 GetRectLightAtlasUVScale(int LightId)
-{
-	return DecodeLightF16x2(SceneLights[LightId].RectLightAtlasUVScale);
-}
-
-float2 GetRectLightAtlasUVOffset(int LightId)
-{
-	return DecodeLightF16x2(SceneLights[LightId].RectLightAtlasUVOffset);
+	return SceneLights[LightId].Shaping.y;
 }
 
 #ifndef USE_ATTENUATION_TERM
@@ -307,13 +195,18 @@ float ComputeAttenuationFalloff(float DistanceSquared, int LightId)
 #define USE_IES_TERM 1
 #endif
 
-float ComputeIESAttenuation(int LightId, float3 TranslatedWorldPosition)
+#if USE_IES_TERM
+Texture2DArray<float> IESTexture;
+SamplerState          IESTextureSampler;
+#endif
+
+float ComputeIESAttenuation(int LightId, float3 WorldPosition)
 {
 	float Result = 1.f;
 #if USE_IES_TERM
-	if (SceneLights[LightId].IESAtlasIndex >= 0)
+	if (SceneLights[LightId].IESTextureSlice >= 0)
 	{
-		float3 LightDirection = normalize(GetTranslatedPosition(LightId) - TranslatedWorldPosition);
+		float3 LightDirection = normalize(GetPosition(LightId) - WorldPosition);
 
 		float DotProd = dot(LightDirection, GetNormal(LightId));
 		float Angle = asin(DotProd);
@@ -323,8 +216,8 @@ float ComputeIESAttenuation(int LightId, float3 TranslatedWorldPosition)
 		float dv = dot(LightDirection, GetdPdv(LightId));
 		float NormTangentAngle = atan2(dv, du) / (PI * 2.f) + 0.5f;
 
-		const float3 UVW = float3(NormAngle, NormTangentAngle, SceneLights[LightId].IESAtlasIndex);
-		Result = View.IESAtlasTexture.SampleLevel(View.IESAtlasSampler, UVW, 0);
+		const float3 UVW = float3(NormAngle, NormTangentAngle, SceneLights[LightId].IESTextureSlice);
+		Result = IESTexture.SampleLevel(IESTextureSampler, UVW, 0);
 	}
 #endif
 	return Result;
@@ -348,29 +241,4 @@ bool IsStationary(int LightId)
 bool CastsShadow(int LightId)
 {
 	return (SceneLights[LightId].Flags & PATHTRACER_FLAG_CAST_SHADOW_MASK) != 0;
-}
-
-bool CastsVolumeShadow(int LightId)
-{
-	return (SceneLights[LightId].Flags & PATHTRACER_FLAG_CAST_VOL_SHADOW_MASK) != 0;
-}
-
-bool HasRectTexture(int LightId)
-{
-	return (SceneLights[LightId].Flags & PATHTRACER_FLAG_HAS_RECT_TEXTURE_MASK) != 0;
-}
-
-float GetVolumetricScatteringIntensity(int LightId)
-{
-	return SceneLights[LightId].VolumetricScatteringIntensity;
-}
-
-float GetLightSpecularScale(int LightId)
-{
-	return SceneLights[LightId].SpecularScale;
-}
-
-uint GetLightMissShaderIndex(int LightId)
-{
-	return SceneLights[LightId].MissShaderIndex;
 }
