@@ -244,11 +244,11 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 BxDFContext Context;
 	FDirectLighting Lighting;
 
-// #if SUPPORTS_ANISOTROPIC_MATERIALS
-// 	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
-// #else
-// 	bool bHasAnisotropy = false;
-// #endif
+#if SUPPORTS_ANISOTROPIC_MATERIALS
+	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
+#else
+	bool bHasAnisotropy = false;
+#endif
 
 	BRANCH
 	if (bHasAnisotropy)
