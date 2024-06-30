@@ -192,6 +192,28 @@ float3 DualSpecularGGX(float AverageRoughness, float Lobe0Roughness, float Lobe1
 	return (D * Vis) * F;
 }
 
+//add a brdf for toon
+float F_Schlick_ScaleTerm(float3 SpecularColor, float VoH)
+{
+	float Fc = Pow5(1 - VoH); // 1 sub, 3 mul
+	return saturate( 50.0 * SpecularColor.g ) * Fc + (1 - Fc);
+}
+
+//add toon specular
+float SpecularGGX_ScaleTerm(float Roughness, float3 SpecularColor, BxDFContext Context, float NoL, FAreaLight AreaLight)
+{
+	float a2 = Pow4(Roughness);
+	float Energy = EnergyNormalization(a2, Context.VoH, AreaLight);  
+	// Generalized microfacet specular
+	float D = D_GGX(a2, Context.NoH) * Energy;
+	float Vis = Vis_SmithJointApprox(a2, Context.NoV, NoL);        
+
+	// cel-shading version
+	float FScale = F_Schlick_ScaleTerm(SpecularColor, Context.VoH);
+	return (D * Vis) * FScale;  
+}
+
+
 FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, float NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
 // 	BxDFContext Context;
@@ -273,7 +295,7 @@ BxDFContext Context;
 
 	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
 
-	if (IsRectLight(AreaLight))
+	if( AreaLight.bIsRect )
 		// Our Custom Shading Model is not supported in this scenario
 		Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
 	else
