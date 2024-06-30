@@ -295,13 +295,25 @@ BxDFContext Context;
 
 	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
 
-	if( AreaLight.bIsRect )
-		// Our Custom Shading Model is not supported in this scenario
-		Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
+	BRANCH
+	if (bHasAnisotropy)
+	{
+		//Lighting.Specular = GBuffer.WorldTangent * .5f + .5f;
+		Lighting.Specular = Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands))*GBuffer.Anisotropy;
+
+	}
 	else
 	{
-		float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
-		Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands));
+		if( AreaLight.bIsRect )
+		{
+		// Our Custom Shading Model is not supported in this scenario
+		Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
+		}
+		else
+		{
+			float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
+			Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands));
+	    }
 	}
 
 	Lighting.Transmission = 0;
