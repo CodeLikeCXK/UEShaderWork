@@ -294,10 +294,12 @@ BxDFContext Context;
 	float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
 
 	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
+	float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
 
 	BRANCH
 	if (bHasAnisotropy)
 	{
+
 		//Lighting.Specular = GBuffer.WorldTangent * .5f + .5f;
 		Lighting.Specular = Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands))*GBuffer.Anisotropy;
 
@@ -311,7 +313,6 @@ BxDFContext Context;
 		}
 		else
 		{
-			float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
 			Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands));
 	    }
 	}
