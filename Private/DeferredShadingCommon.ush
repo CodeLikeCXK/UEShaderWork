@@ -738,8 +738,11 @@ FGBufferData MobileDecodeGBuffer(half4 InGBufferA, half4 InGBufferB, half4 InGBu
 
 	// derived from BaseColor, Metalness, Specular
 	{
-		GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
-		GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * GBuffer.Metallic;
+	    //replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
+		//GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
+		//GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * GBuffer.Metallic;
+		GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, 0.0f);
+		GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * 0.0f;
 	}
 	return GBuffer;
 }

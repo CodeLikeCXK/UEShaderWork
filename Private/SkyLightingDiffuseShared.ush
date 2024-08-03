@@ -97,6 +97,12 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	float3 DiffuseWeight = ComputeEnergyPreservation(EnergyTerms);
 
 	BRANCH
+	//change start
+	if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT)
+	{
+		Lighting += GBuffer.BaseColor;
+	}
+	//change end
 	if (GBuffer.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE)
 	{
 		float3 SubsurfaceLookup = GetSkySHDiffuse(-GBuffer.WorldNormal) * View.SkyLightColor.rgb;

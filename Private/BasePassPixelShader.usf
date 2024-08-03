@@ -1097,7 +1097,9 @@ void FPixelShaderInOut_MainPS(
 #if !SUBSTRATE_ENABLED || SUBSTRATE_INLINE_SINGLELAYERWATER
 
 	// So that the following code can still use DiffuseColor and SpecularColor.
-	GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
+	//GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
+	//replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
+	GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, 0.0f);
 
 #if MATERIAL_NORMAL_CURVATURE_TO_ROUGHNESS
 	const float GeometricAARoughness = GetRoughnessFromNormalCurvature(MaterialParameters);
@@ -1119,7 +1121,9 @@ void FPixelShaderInOut_MainPS(
 		AdjustBaseColorAndSpecularColorForSubsurfaceProfileLighting(BaseColor, GBuffer.SpecularColor, Specular, bChecker);
 	}
 #endif
-	GBuffer.DiffuseColor = BaseColor - BaseColor * Metallic;
+	//replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
+	//GBuffer.DiffuseColor = BaseColor - BaseColor * Metallic;
+	GBuffer.DiffuseColor = BaseColor - BaseColor * 0.0f;
 
 #if USE_DEVELOPMENT_SHADERS
 	{

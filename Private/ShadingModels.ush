@@ -142,8 +142,21 @@ struct FShadowTerms
 	half	TransmissionThickness;
 	FHairTransmittanceData HairTransmittance;
 };
+
+//replace default hairBxdf with a toon hair. Article:https://zhuanlan.zhihu.com/p/573897188
+//add Kajiya-Kay
+//Default Hair BxDf Has no aniso pin. Replace Clear Coat
+float KajiyaKay(float3 T, float3 N, half3 H, float TShift, float PowNum)
+{
+	float3 TS = normalize(T+TShift*N);
+	float TSoH = dot(TS,H);
+	float Diratten = smoothstep(-1.0,0.0,TSoH);
+	float SinTH = sqrt(1-TSoH*TSoH);
+	return Diratten*pow(SinTH,PowNum);
+}
 FDirectLighting HairBxDF(FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow)
 {
+
 	const float3 BsdfValue = HairShading(GBuffer, L, V, N, Shadow.TransmissionShadow, Shadow.HairTransmittance, 1, 0, uint2(0, 0));
 
 	FDirectLighting Lighting;
@@ -151,6 +164,7 @@ FDirectLighting HairBxDF(FGBufferData GBuffer, half3 N, half3 V, half3 L, float 
 	Lighting.Specular = 0;
 	Lighting.Transmission = AreaLight.FalloffColor * Falloff * BsdfValue;
 	return Lighting;
+
 }
 
 float New_a2( float a2, float SinAlpha, float VoH )
@@ -458,230 +472,250 @@ BxDFContext RefractClearCoatContext(BxDFContext Context)
 
 FDirectLighting ClearCoatBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
-	const half ClearCoat			= GBuffer.CustomData.x;
-	const half ClearCoatRoughness	= max(GBuffer.CustomData.y, 0.02f);
-
-	FDirectLighting Lighting = {
-		float3(0.0, 0.0, 0.0),
-		float3(0.0, 0.0, 0.0),
-		float3(0.0, 0.0, 0.0)
-	};
+		// Remember GBufferD is a R8B8G8A8..so value would be clamped to 0,1, so we pass (1 / Band) from MatGraph...
+		float InvBandsInput = GBuffer.Metallic;		// 2 bands <=> each band has 0.5 width	
+		float Band = ceil(1.0f / (float)InvBandsInput);
+		float InvBands = 1.0f / Band;
+		float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
 	
-	BxDFContext Context;
-	half3 Nspec = N;
+		//replace default clearcoatBxDF with a toon hair. Article:https://zhuanlan.zhihu.com/p/573897188
+		float3 LightColor = AreaLight.FalloffColor * Falloff;
+		float SpecularRange = GBuffer.Specular*10000;
+		float SpecularTShift = (GBuffer.Roughness-0.5)*10;
+		half3 H = normalize(V+L);
+		float AnisotropicSpecular;
+		AnisotropicSpecular = saturate(KajiyaKay(GBuffer.WorldTangent,N,H,SpecularTShift,SpecularRange));
+		FDirectLighting Lighting;
+		Lighting.Diffuse = LightColor*Diffuse_Lambert(GBuffer.BaseColor)*saturate(ValueItv * floor(NoL / InvBands));
+		Lighting.Specular=LightColor*AnisotropicSpecular;
+		Lighting.Transmission=0;
+		return Lighting;
+		//over
 
-	if (CLEAR_COAT_BOTTOM_NORMAL)
-	{
-		Nspec = GBuffer.WorldNormal;
-	}
+// 	const half ClearCoat			= GBuffer.CustomData.x;
+// 	const half ClearCoatRoughness	= max(GBuffer.CustomData.y, 0.02f);
 
-#if SUPPORTS_ANISOTROPIC_MATERIALS
-	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
-#else
-	bool bHasAnisotropy = false;
-#endif
-
-	half3 X = 0;
-	half3 Y = 0;
-
-	//////////////////////////////
-	/// Top Layer
-	//////////////////////////////
-
-	// No anisotropy for the top layer
-	Init(Context, Nspec, V, L);
+// 	FDirectLighting Lighting = {
+// 		float3(0.0, 0.0, 0.0),
+// 		float3(0.0, 0.0, 0.0),
+// 		float3(0.0, 0.0, 0.0)
+// 	};
 	
-	// Modify SphereSinAlpha, knowing that it was previously manipulated by roughness of the under coat
-	// Note: the operation is not invertible for GBuffer.Roughness = 1.0, so roughness is clamped to 254.0/255.0
-	float SphereSinAlpha = AreaLight.SphereSinAlpha;
-	float RoughnessCompensation = 1 - Pow2(GBuffer.Roughness);
-	half Alpha = ClearCoatRoughness * ClearCoatRoughness;
-	RoughnessCompensation = RoughnessCompensation > 0.0 ? (1 - Alpha) / RoughnessCompensation : 0.0;
-	AreaLight.SphereSinAlpha = saturate(AreaLight.SphereSinAlpha * RoughnessCompensation);
+// 	BxDFContext Context;
+// 	half3 Nspec = N;
 
-	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, CLEAR_COAT_BOTTOM_NORMAL == 0);
-	Context.NoV = saturate(abs(Context.NoV) + 1e-5);
-	const bool bIsRect = IsRectLight(AreaLight);
-	Context.VoH = bIsRect ? Context.NoV : Context.VoH;
+// 	if (CLEAR_COAT_BOTTOM_NORMAL)
+// 	{
+// 		Nspec = GBuffer.WorldNormal;
+// 	}
 
-	// Hard-coded Fresnel evaluation with IOR = 1.5 (for polyurethane cited by Disney BRDF)
-	float F0 = 0.04;
-	float Fc = Pow5(1 - Context.VoH);
-	float F = Fc + (1 - Fc) * F0;
+// #if SUPPORTS_ANISOTROPIC_MATERIALS
+// 	bool bHasAnisotropy = HasAnisotropy(GBuffer.SelectiveOutputMask);
+// #else
+// 	bool bHasAnisotropy = false;
+// #endif
 
-	FBxDFEnergyTerms EnergyTermsCoat   = ComputeGGXSpecEnergyTerms(ClearCoatRoughness, Context.NoV, F0);
+// 	half3 X = 0;
+// 	half3 Y = 0;
 
-	if (bIsRect)
-	{
-		Lighting.Specular = ClearCoat * RectGGXApproxLTC(ClearCoatRoughness, F0, Nspec, V, AreaLight.Rect, AreaLight.Texture);
-	}
-	else
-	{
-		// Generalized microfacet specular
-		float a2 = Pow2(Alpha);
-		float ClearCoatEnergy = EnergyNormalization(a2, Context.VoH, AreaLight);
-		half Vis = Vis_SmithJointApprox(a2, Context.NoV, NoL);
-#if SHADING_PATH_MOBILE
-		half D = D_GGX_Mobile(ClearCoatRoughness, Context.NoH) * ClearCoatEnergy;
-		Vis = saturate(Vis);
-#else
-		float D = D_GGX(a2, Context.NoH) * ClearCoatEnergy;
-#endif
-		half Fr1 = (D * Vis) * F;
-		Lighting.Specular = ClearCoat * AreaLight.FalloffColor * (Falloff * NoL * Fr1);
-	}
-	Lighting.Specular *= ComputeEnergyConservation(EnergyTermsCoat);
+// 	//////////////////////////////
+// 	/// Top Layer
+// 	//////////////////////////////
 
-	// Restore previously changed SphereSinAlpha for the top layer. 
-	// Alpha needs to also be restored to the bottom layer roughness.
-	AreaLight.SphereSinAlpha = SphereSinAlpha;
-	Alpha = Pow2(GBuffer.Roughness);
+// 	// No anisotropy for the top layer
+// 	Init(Context, Nspec, V, L);
+	
+// 	// Modify SphereSinAlpha, knowing that it was previously manipulated by roughness of the under coat
+// 	// Note: the operation is not invertible for GBuffer.Roughness = 1.0, so roughness is clamped to 254.0/255.0
+// 	float SphereSinAlpha = AreaLight.SphereSinAlpha;
+// 	float RoughnessCompensation = 1 - Pow2(GBuffer.Roughness);
+// 	half Alpha = ClearCoatRoughness * ClearCoatRoughness;
+// 	RoughnessCompensation = RoughnessCompensation > 0.0 ? (1 - Alpha) / RoughnessCompensation : 0.0;
+// 	AreaLight.SphereSinAlpha = saturate(AreaLight.SphereSinAlpha * RoughnessCompensation);
 
-	// Incoming and exiting Fresnel terms are identical to incoming Fresnel term (VoH == HoL)
-	// float FresnelCoeff = (1.0 - F1) * (1.0 - F2);
-	#if USE_ENERGY_CONSERVATION
-	float3 FresnelCoeff = ComputeEnergyPreservation(EnergyTermsCoat); // 1.0 - F;
-	#else
-	// Preserve old behavior when energy conservation is disabled
-	half FresnelCoeff = 1.0 - F;
-	#endif
-	FresnelCoeff *= FresnelCoeff;
+// 	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, CLEAR_COAT_BOTTOM_NORMAL == 0);
+// 	Context.NoV = saturate(abs(Context.NoV) + 1e-5);
+// 	const bool bIsRect = IsRectLight(AreaLight);
+// 	Context.VoH = bIsRect ? Context.NoV : Context.VoH;
 
-	//////////////////////////////
-	/// Bottom Layer
-	//////////////////////////////
+// 	// Hard-coded Fresnel evaluation with IOR = 1.5 (for polyurethane cited by Disney BRDF)
+// 	float F0 = 0.04;
+// 	float Fc = Pow5(1 - Context.VoH);
+// 	float F = Fc + (1 - Fc) * F0;
 
-	if (CLEAR_COAT_BOTTOM_NORMAL)
-	{
-		BxDFContext TempContext;
+// 	FBxDFEnergyTerms EnergyTermsCoat   = ComputeGGXSpecEnergyTerms(ClearCoatRoughness, Context.NoV, F0);
 
-		BRANCH
-		if (bHasAnisotropy)
-		{
-			Init(TempContext, N, X, Y, V, L);
-		}
-		else
-		{
-			Init(TempContext, Nspec, V, L);
-		}
+// 	if (bIsRect)
+// 	{
+// 		Lighting.Specular = ClearCoat * RectGGXApproxLTC(ClearCoatRoughness, F0, Nspec, V, AreaLight.Rect, AreaLight.Texture);
+// 	}
+// 	else
+// 	{
+// 		// Generalized microfacet specular
+// 		float a2 = Pow2(Alpha);
+// 		float ClearCoatEnergy = EnergyNormalization(a2, Context.VoH, AreaLight);
+// 		half Vis = Vis_SmithJointApprox(a2, Context.NoV, NoL);
+// #if SHADING_PATH_MOBILE
+// 		half D = D_GGX_Mobile(ClearCoatRoughness, Context.NoH) * ClearCoatEnergy;
+// 		Vis = saturate(Vis);
+// #else
+// 		float D = D_GGX(a2, Context.NoH) * ClearCoatEnergy;
+// #endif
+// 		half Fr1 = (D * Vis) * F;
+// 		Lighting.Specular = ClearCoat * AreaLight.FalloffColor * (Falloff * NoL * Fr1);
+// 	}
+// 	Lighting.Specular *= ComputeEnergyConservation(EnergyTermsCoat);
 
-		// If bottom-normal, update normal-based dot products:
-		float3 H = normalize(V + L);
-		Context.NoH = saturate(dot(N, H));
-		Context.NoV = saturate(dot(N, V));
-		Context.NoL = saturate(dot(N, L));
-		Context.VoL = saturate(dot(V, L));
-		Context.VoH = saturate(dot(V, H));
+// 	// Restore previously changed SphereSinAlpha for the top layer. 
+// 	// Alpha needs to also be restored to the bottom layer roughness.
+// 	AreaLight.SphereSinAlpha = SphereSinAlpha;
+// 	Alpha = Pow2(GBuffer.Roughness);
 
-		Context.XoV = TempContext.XoV;
-		Context.XoL = TempContext.XoL;
-		Context.XoH = TempContext.XoH;
-		Context.YoV = TempContext.YoV;
-		Context.YoL = TempContext.YoL;
-		Context.YoH = TempContext.YoH;
+// 	// Incoming and exiting Fresnel terms are identical to incoming Fresnel term (VoH == HoL)
+// 	// float FresnelCoeff = (1.0 - F1) * (1.0 - F2);
+// 	#if USE_ENERGY_CONSERVATION
+// 	float3 FresnelCoeff = ComputeEnergyPreservation(EnergyTermsCoat); // 1.0 - F;
+// 	#else
+// 	// Preserve old behavior when energy conservation is disabled
+// 	half FresnelCoeff = 1.0 - F;
+// 	#endif
+// 	FresnelCoeff *= FresnelCoeff;
 
-		if (!bHasAnisotropy)
-		{
-			bool bNewtonIteration = true;
-			SphereMaxNoH(Context, AreaLight.SphereSinAlpha, bNewtonIteration);
-		}
+// 	//////////////////////////////
+// 	/// Bottom Layer
+// 	//////////////////////////////
 
-		Context.NoV = saturate(abs(Context.NoV) + 1e-5);
-	}
+// 	if (CLEAR_COAT_BOTTOM_NORMAL)
+// 	{
+// 		BxDFContext TempContext;
 
-	// Propagate refraction through dot-products rather than the original vectors:
-	// Reference:
-	//   float Eta = 1.0 / 1.5;
-	//   float3 H = normalize(V + L);
-	//   float3 V2 = Refract(V, H, Eta);
-	//   float3 L2 = reflect(V2, H);
-	//   V2 = -V2;
-	//   BxDFContext BottomContext;
-	//   Init(BottomContext, N, X, Y, V2, L2);
-	if (bHasAnisotropy)
-	{
-		// Prepare the anisotropic Context to refract.
-		X = GBuffer.WorldTangent;
-		Y = normalize(cross(N, X));
-		Init(Context, Nspec, X, Y, V, L);
-	}
-	BxDFContext BottomContext = RefractClearCoatContext(Context);
-	BottomContext.VoH = bIsRect ? BottomContext.NoV : BottomContext.VoH;
+// 		BRANCH
+// 		if (bHasAnisotropy)
+// 		{
+// 			Init(TempContext, N, X, Y, V, L);
+// 		}
+// 		else
+// 		{
+// 			Init(TempContext, Nspec, V, L);
+// 		}
 
-	FBxDFEnergyTerms EnergyTermsBottom = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, BottomContext.NoV, GBuffer.SpecularColor);
+// 		// If bottom-normal, update normal-based dot products:
+// 		float3 H = normalize(V + L);
+// 		Context.NoH = saturate(dot(N, H));
+// 		Context.NoV = saturate(dot(N, V));
+// 		Context.NoL = saturate(dot(N, L));
+// 		Context.VoL = saturate(dot(V, L));
+// 		Context.VoH = saturate(dot(V, H));
 
-	// Absorption
-	float3 Transmission = SimpleClearCoatTransmittance(BottomContext.NoL, BottomContext.NoV, GBuffer.Metallic, GBuffer.BaseColor);
+// 		Context.XoV = TempContext.XoV;
+// 		Context.XoL = TempContext.XoL;
+// 		Context.XoH = TempContext.XoH;
+// 		Context.YoV = TempContext.YoV;
+// 		Context.YoL = TempContext.YoL;
+// 		Context.YoH = TempContext.YoH;
 
-	// Default Lit
-	half3 DefaultDiffuse = (Falloff * NoL) * AreaLight.FalloffColor * Diffuse_Lambert(GBuffer.DiffuseColor) * ComputeEnergyPreservation(EnergyTermsBottom);
-	half3 RefractedDiffuse = FresnelCoeff * Transmission * DefaultDiffuse;
-	Lighting.Diffuse = lerp(DefaultDiffuse, RefractedDiffuse, ClearCoat);
+// 		if (!bHasAnisotropy)
+// 		{
+// 			bool bNewtonIteration = true;
+// 			SphereMaxNoH(Context, AreaLight.SphereSinAlpha, bNewtonIteration);
+// 		}
 
-	if (!bHasAnisotropy && bIsRect)
-	{
-		// Note: V is used instead of V2 because LTC integration is not tuned to handle refraction direction
-		float3 DefaultSpecular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
-		float3 RefractedSpecular = FresnelCoeff * Transmission * DefaultSpecular;
-		Lighting.Specular += lerp(DefaultSpecular, RefractedSpecular, ClearCoat);
-	}
-	else
-	{
-		float a2 = Pow4(GBuffer.Roughness);
-		half D2 = 0;
-		half Vis2 = 0;
+// 		Context.NoV = saturate(abs(Context.NoV) + 1e-5);
+// 	}
 
-		BRANCH
-		if (bHasAnisotropy)
-		{
-			float ax = 0;
-			float ay = 0;
-			GetAnisotropicRoughness(Alpha, GBuffer.Anisotropy, ax, ay); 
+// 	// Propagate refraction through dot-products rather than the original vectors:
+// 	// Reference:
+// 	//   float Eta = 1.0 / 1.5;
+// 	//   float3 H = normalize(V + L);
+// 	//   float3 V2 = Refract(V, H, Eta);
+// 	//   float3 L2 = reflect(V2, H);
+// 	//   V2 = -V2;
+// 	//   BxDFContext BottomContext;
+// 	//   Init(BottomContext, N, X, Y, V2, L2);
+// 	if (bHasAnisotropy)
+// 	{
+// 		// Prepare the anisotropic Context to refract.
+// 		X = GBuffer.WorldTangent;
+// 		Y = normalize(cross(N, X));
+// 		Init(Context, Nspec, X, Y, V, L);
+// 	}
+// 	BxDFContext BottomContext = RefractClearCoatContext(Context);
+// 	BottomContext.VoH = bIsRect ? BottomContext.NoV : BottomContext.VoH;
 
-			D2 = D_GGXaniso(ax, ay, Context.NoH, Context.XoH, Context.YoH);
-			Vis2 = Vis_SmithJointAniso(ax, ay, BottomContext.NoV, BottomContext.NoL, BottomContext.XoV, BottomContext.XoL, BottomContext.YoV, BottomContext.YoL);
-		}
-		else
-		{
-			// NoL is chosen to provide better parity with DefaultLit when ClearCoat=0
-			Vis2 = Vis_SmithJointApprox(a2, BottomContext.NoV, NoL);
-#if SHADING_PATH_MOBILE
-			D2 = D_GGX_Mobile(GBuffer.Roughness, BottomContext.NoH);
-			Vis2 = saturate(Vis2);
-#else
-			D2 = D_GGX(a2, BottomContext.NoH);
-#endif
-		}
-		half3 F_Bot = F_Schlick(GBuffer.SpecularColor, BottomContext.VoH);
-		half3 F_DefaultLit = F_Schlick(GBuffer.SpecularColor, Context.VoH);
+// 	FBxDFEnergyTerms EnergyTermsBottom = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, BottomContext.NoV, GBuffer.SpecularColor);
+
+// 	// Absorption
+// 	float3 Transmission = SimpleClearCoatTransmittance(BottomContext.NoL, BottomContext.NoV, GBuffer.Metallic, GBuffer.BaseColor);
+
+// 	// Default Lit
+// 	half3 DefaultDiffuse = (Falloff * NoL) * AreaLight.FalloffColor * Diffuse_Lambert(GBuffer.DiffuseColor) * ComputeEnergyPreservation(EnergyTermsBottom);
+// 	half3 RefractedDiffuse = FresnelCoeff * Transmission * DefaultDiffuse;
+// 	Lighting.Diffuse = lerp(DefaultDiffuse, RefractedDiffuse, ClearCoat);
+
+// 	if (!bHasAnisotropy && bIsRect)
+// 	{
+// 		// Note: V is used instead of V2 because LTC integration is not tuned to handle refraction direction
+// 		float3 DefaultSpecular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
+// 		float3 RefractedSpecular = FresnelCoeff * Transmission * DefaultSpecular;
+// 		Lighting.Specular += lerp(DefaultSpecular, RefractedSpecular, ClearCoat);
+// 	}
+// 	else
+// 	{
+// 		float a2 = Pow4(GBuffer.Roughness);
+// 		half D2 = 0;
+// 		half Vis2 = 0;
+
+// 		BRANCH
+// 		if (bHasAnisotropy)
+// 		{
+// 			float ax = 0;
+// 			float ay = 0;
+// 			GetAnisotropicRoughness(Alpha, GBuffer.Anisotropy, ax, ay); 
+
+// 			D2 = D_GGXaniso(ax, ay, Context.NoH, Context.XoH, Context.YoH);
+// 			Vis2 = Vis_SmithJointAniso(ax, ay, BottomContext.NoV, BottomContext.NoL, BottomContext.XoV, BottomContext.XoL, BottomContext.YoV, BottomContext.YoL);
+// 		}
+// 		else
+// 		{
+// 			// NoL is chosen to provide better parity with DefaultLit when ClearCoat=0
+// 			Vis2 = Vis_SmithJointApprox(a2, BottomContext.NoV, NoL);
+// #if SHADING_PATH_MOBILE
+// 			D2 = D_GGX_Mobile(GBuffer.Roughness, BottomContext.NoH);
+// 			Vis2 = saturate(Vis2);
+// #else
+// 			D2 = D_GGX(a2, BottomContext.NoH);
+// #endif
+// 		}
+// 		half3 F_Bot = F_Schlick(GBuffer.SpecularColor, BottomContext.VoH);
+// 		half3 F_DefaultLit = F_Schlick(GBuffer.SpecularColor, Context.VoH);
 		
-		float Energy = 0;
+// 		float Energy = 0;
 
-		BRANCH
-		if (bHasAnisotropy)
-		{
-			FAreaLight Punctual = AreaLight;
-			Punctual.SphereSinAlpha = 0;
-			Punctual.SphereSinAlphaSoft = 0;
-			Punctual.LineCosSubtended = 1;
-			Punctual.Rect = (FRect)0;
-			Punctual.IsRectAndDiffuseMicroReflWeight = 0;
+// 		BRANCH
+// 		if (bHasAnisotropy)
+// 		{
+// 			FAreaLight Punctual = AreaLight;
+// 			Punctual.SphereSinAlpha = 0;
+// 			Punctual.SphereSinAlphaSoft = 0;
+// 			Punctual.LineCosSubtended = 1;
+// 			Punctual.Rect = (FRect)0;
+// 			Punctual.IsRectAndDiffuseMicroReflWeight = 0;
 			
-			Energy = EnergyNormalization(a2, Context.VoH, Punctual);
-		}
-		else
-		{
-			Energy = EnergyNormalization(a2, Context.VoH, AreaLight);
-		}
+// 			Energy = EnergyNormalization(a2, Context.VoH, Punctual);
+// 		}
+// 		else
+// 		{
+// 			Energy = EnergyNormalization(a2, Context.VoH, AreaLight);
+// 		}
 
-		// Note: reusing D and V from refracted context to save computation when ClearCoat < 1
-		float3 CommonSpecular = (Energy * Falloff * NoL * D2 * Vis2) * AreaLight.FalloffColor;
-		float3 DefaultSpecular = F_DefaultLit;
-		float3 RefractedSpecular = FresnelCoeff * Transmission * F_Bot;
-		Lighting.Specular += CommonSpecular * lerp(DefaultSpecular, RefractedSpecular, ClearCoat);
-	}
+// 		// Note: reusing D and V from refracted context to save computation when ClearCoat < 1
+// 		float3 CommonSpecular = (Energy * Falloff * NoL * D2 * Vis2) * AreaLight.FalloffColor;
+// 		float3 DefaultSpecular = F_DefaultLit;
+// 		float3 RefractedSpecular = FresnelCoeff * Transmission * F_Bot;
+// 		Lighting.Specular += CommonSpecular * lerp(DefaultSpecular, RefractedSpecular, ClearCoat);
+// 	}
 
-	return Lighting;
+// 	return Lighting;
 }
 
 // HG phase function approximated

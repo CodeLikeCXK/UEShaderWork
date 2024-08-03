@@ -420,15 +420,19 @@ void GBufferPostDecode(inout FGBufferData Ret, bool bChecker, bool bGetNormalize
 	
 	// derived from BaseColor, Metalness, Specular
 	{
-		Ret.SpecularColor = ComputeF0(Ret.Specular, Ret.BaseColor, Ret.Metallic);
+		//replace with toon
+		//Ret.SpecularColor = ComputeF0(Ret.Specular, Ret.BaseColor, Ret.Metallic);
+		Ret.SpecularColor = ComputeF0(Ret.Specular, Ret.BaseColor,0.0f);
 	
 		if (UseSubsurfaceProfile(Ret.ShadingModelID))
 		{
 			AdjustBaseColorAndSpecularColorForSubsurfaceProfileLightingCopyHack(Ret.BaseColor, Ret.SpecularColor, Ret.Specular, bChecker);
 		}
 	
-		Ret.DiffuseColor = Ret.BaseColor - Ret.BaseColor * Ret.Metallic;
-	
+		//replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
+		//Ret.DiffuseColor = Ret.BaseColor - Ret.BaseColor * Ret.Metallic;
+	    Ret.DiffuseColor = Ret.BaseColor - Ret.BaseColor * 0.0f;
+
 		#if USE_DEVELOPMENT_SHADERS
 		{
 			// this feature is only needed for development/editor - we can compile it out for a shipping build (see r.CompileShadersForDevelopment cvar help)
