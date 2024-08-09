@@ -1105,12 +1105,12 @@ void FPixelShaderInOut_MainPS(
 	const float GeometricAARoughness = GetRoughnessFromNormalCurvature(MaterialParameters);
 	GBuffer.Roughness = max(GBuffer.Roughness, GeometricAARoughness);
 
-#if MATERIAL_SHADINGMODEL_CLEAR_COAT
-	if (GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
-	{
-		GBuffer.CustomData.y = max(GBuffer.CustomData.y, GeometricAARoughness);
-	}	
-#endif
+//#if MATERIAL_SHADINGMODEL_CLEAR_COAT
+//	if (GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+//	{
+//		GBuffer.CustomData.y = max(GBuffer.CustomData.y, GeometricAARoughness);
+//	}	
+//#endif
 #endif
 
 #if POST_PROCESS_SUBSURFACE

@@ -377,6 +377,10 @@ FLightAccumulator AccumulateDynamicLighting(
 	float3 ToonAttenuation;
 	//try to use anisotropic to control shadow offset
 	float ShadowOffset = GBuffer.Anisotropy;
+	if(ShadingModelID=SHADINGMODELID_CLOTH)
+	{
+		ShadowOffset = 0.6;
+	}
 	ShadowOffset = (ShadowOffset-0.5)*2;
 	float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
 	//use metallic to control shadow attenuation speed

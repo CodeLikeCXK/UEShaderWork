@@ -529,8 +529,21 @@ void ReflectionEnvironmentSkyLighting(
 	{
 		float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), View.ScreenToTranslatedWorld).xyz;
 		const float CloudVolumetricAOShadow = GetCloudVolumetricAOShadow(TranslatedWorldPosition);
-
 		float3 SkyLighting = CloudVolumetricAOShadow * SkyLightDiffuse(GBuffer, AmbientOcclusion, BufferUV, ScreenPosition, BentNormal, DiffuseColor);
+		//add toon
+		if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+		{
+			SkyLighting = float3(0.0f,0.0f,0.0f);
+			//normally it should be subsurface color. Since we are using default lit, a base color could work?
+			SkyLighting = GBuffer.BaseColor * SpecularColor.rgb;
+		}
+		if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+		{
+			SkyLighting = float3(0.0f,0.0f,0.0f);
+			//float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
+			float3 SubsurfaceColor =  GBuffer.CustomData.xyz;
+			SkyLighting = DiffuseColor * SubsurfaceColor;
+		}
 
 		FLightAccumulator LightAccumulator = (FLightAccumulator)0;
 		const bool bNeedsSeparateSubsurfaceLightAccumulation = UseSubsurfaceProfile(ShadingModelID);

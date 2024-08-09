@@ -100,9 +100,9 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	//change start
 	if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
 	{
-		//normally it should be subsurface color. Since we are using default lit, a weaker base color could work?
+		//normally it should be subsurface color. Since we are using default lit, a base color could work?
 		//add return lighting to skep further calcs
-		Lighting = GBuffer.BaseColor * GBuffer.BaseColor * 0.5;
+		Lighting = GBuffer.BaseColor * GBuffer.SpecularColor.rgb;
 		return Lighting;
 	}
 	//change end
@@ -132,7 +132,8 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 	{
 		//cloth is replaced with toon. Similar
-		float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
+		//float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
+		float3 SubsurfaceColor = GBuffer.CustomData.xyz;
 		Lighting = GBuffer.BaseColor * SubsurfaceColor;
 		return Lighting;
 	}

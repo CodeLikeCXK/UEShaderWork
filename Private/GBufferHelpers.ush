@@ -311,7 +311,8 @@ void GBufferPreEncode(inout FGBufferData GBuffer, bool bChecker, float Geometric
 	}
 #endif
 
-	GBuffer.DiffuseColor = OriginalBaseColor - OriginalBaseColor * OriginalMetallic;
+	//GBuffer.DiffuseColor = OriginalBaseColor - OriginalBaseColor * OriginalMetallic;
+	GBuffer.DiffuseColor = OriginalBaseColor - OriginalBaseColor * 0.0f;
 
 #if USE_DEVELOPMENT_SHADERS
 	{

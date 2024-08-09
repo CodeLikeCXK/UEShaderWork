@@ -303,8 +303,8 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 	#else
 			Init(Context, N, V, L);
 	#endif
-	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
-	Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
+	//SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
+	//Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
 	
 	half3 H = normalize(V+L);
 	float NoH = saturate(dot(N,H));
@@ -826,11 +826,12 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 #endif
     float3 LightColor = AreaLight.FalloffColor * Falloff;
     //解GBuffer
-    //	float SpecularRange 	= GBuffer.Metallic;
+    //float SpecularRange 	= GBuffer.Metallic;
     float ShadowRange = GBuffer.Specular;
     float ShadowOffset  = (GBuffer.Roughness - 0.5) * 2;
     //	float InnerLine 	= GBuffer.CustomData.a;
-    float3 SSSColor	= ExtractSubsurfaceColor(GBuffer); //解码SSS
+    //float3 SSSColor	= ExtractSubsurfaceColor(GBuffer); //解码SSS
+	float3 SSSColor	= GBuffer.CustomData.rgb;
     //明暗颜色
     float3 BrightColor =GBuffer.BaseColor;
     float3 ShadowColor = SSSColor;
@@ -844,7 +845,7 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
    FDirectLighting Lighting;
    Lighting.Diffuse = LightColor * Diffuse_Lambert(lerp(ShadowColor, BrightColor, IsShadow));
    //Lighting.Specular = LightColor * BrightColor * IsShadow * InnerLineColor * step(0.2f, SpecularRange * pow(NoH, SpecularIntensity));
-   Lighting.Specular = 0;
+   //Lighting.Specular = 0;
    Lighting.Transmission = 0;
    return Lighting;
 }
