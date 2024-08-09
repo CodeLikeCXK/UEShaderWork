@@ -1099,7 +1099,7 @@ void FPixelShaderInOut_MainPS(
 	// So that the following code can still use DiffuseColor and SpecularColor.
 	//GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
 	//replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
-	GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, 0.0f);
+	GBuffer.SpecularColor = ComputeF0(GBuffer.SpecularColor, GBuffer.BaseColor, 0.0f);
 
 #if MATERIAL_NORMAL_CURVATURE_TO_ROUGHNESS
 	const float GeometricAARoughness = GetRoughnessFromNormalCurvature(MaterialParameters);

@@ -100,7 +100,10 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	//change start
 	if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
 	{
-		Lighting += GBuffer.BaseColor;
+		//normally it should be subsurface color. Since we are using default lit, a weaker base color could work?
+		//add return lighting to skep further calcs
+		Lighting = GBuffer.BaseColor * GBuffer.BaseColor * 0.5;
+		return Lighting;
 	}
 	//change end
 	if (GBuffer.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE)
@@ -128,8 +131,10 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 
 	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 	{
-		float3 ClothFuzz = ExtractSubsurfaceColor(GBuffer);
-		DiffuseColor += ClothFuzz * GBuffer.CustomData.a;
+		//cloth is replaced with toon. Similar
+		float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
+		Lighting = GBuffer.BaseColor * SubsurfaceColor;
+		return Lighting;
 	}
 
 	// Compute the preconvolved incoming lighting with the bent normal direction
