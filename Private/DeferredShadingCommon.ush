@@ -1002,14 +1002,17 @@ FGBufferData DecodeGBufferData(
 
 	// derived from BaseColor, Metalness, Specular
 	{
-		GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
 
+		//GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, GBuffer.Metallic);
+
+		GBuffer.SpecularColor = ComputeF0(GBuffer.Specular, GBuffer.BaseColor, 0.0f);
 		if (UseSubsurfaceProfile(GBuffer.ShadingModelID))
 		{
 			AdjustBaseColorAndSpecularColorForSubsurfaceProfileLighting(GBuffer.BaseColor, GBuffer.SpecularColor, GBuffer.Specular, bChecker);
 		}
 
-		GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * GBuffer.Metallic;
+	//	GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * GBuffer.Metallic;
+	GBuffer.DiffuseColor = GBuffer.BaseColor - GBuffer.BaseColor * 0.0f;
 
 		#if USE_DEVELOPMENT_SHADERS
 		{

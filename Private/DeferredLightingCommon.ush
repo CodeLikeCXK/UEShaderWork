@@ -309,6 +309,19 @@ FCapsuleLight GetCapsule( float3 ToLight, FDeferredLightData LightData )
 	return Capsule;
 }
 
+//add toon related functions
+
+float CalcShadowMask(float x, float y)
+{
+	y *= 0.1f;
+	return smoothstep(0.5f-y,0.5f+y,x);
+}
+
+float GetToonSurfaceShadow(float Shadow, float ShadowAttenuationSpeed)
+{
+	return CalcShadowMask(Shadow,ShadowAttenuationSpeed);
+}
+
 FLightAccumulator AccumulateDynamicLighting(
 	float3 TranslatedWorldPosition, half3 CameraVector, FGBufferData GBuffer, half AmbientOcclusion, uint ShadingModelID,
 	FDeferredLightData LightData, half4 LightAttenuation, float Dither, uint2 SVPos, 
@@ -318,16 +331,21 @@ FLightAccumulator AccumulateDynamicLighting(
 
 	half3 V = -CameraVector;
 	half3 N = GBuffer.WorldNormal;
-	BRANCH if( GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT && CLEAR_COAT_BOTTOM_NORMAL)
-	{
-		const float2 oct1 = ((float2(GBuffer.CustomData.a, GBuffer.CustomData.z) * 4) - (512.0/255.0)) + UnitVectorToOctahedron(GBuffer.WorldNormal);
-		N = OctahedronToUnitVector(oct1);			
-	}
+
+	//since clearcoatBxDF is replaced with a toon hair, the branch could be removed
+	//BRANCH if( GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT && CLEAR_COAT_BOTTOM_NORMAL)
+	//{
+	//	const float2 oct1 = ((float2(GBuffer.CustomData.a, GBuffer.CustomData.z) * 4) - (512.0/255.0)) + UnitVectorToOctahedron(GBuffer.WorldNormal);
+	//	N = OctahedronToUnitVector(oct1);			
+	//}
 	
 	float3 L = LightData.Direction;	// Already normalized
 	float3 ToLight = L;
 	float3 MaskedLightColor = LightData.Color;
-	float LightMask = 1;
+	float LightMask = 1;	
+	//move NoL up here
+	half NoL = dot(N,L);
+
 	if (LightData.bRadialLight)
 	{
 		LightMask = GetLocalLightAttenuation( TranslatedWorldPosition, LightData, ToLight, L );
@@ -355,21 +373,38 @@ FLightAccumulator AccumulateDynamicLighting(
 
 		LightAccumulator.EstimatedCost += 0.3f;		// add the cost of getting the shadow terms
 
+	//add toon shadow calculation
+	float3 ToonAttenuation;
+	//try to use anisotropic to control shadow offset
+	float ShadowOffset = GBuffer.Anisotropy;
+	ShadowOffset = (ShadowOffset-0.5)*2;
+	float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
+	//use metallic to control shadow attenuation speed
+	ToonAttenuation = GetToonSurfaceShadow(ShadowPart,GBuffer.Metallic);
+	ToonAttenuation*=MaskedLightColor*LightMask;
+	//end
+
+
+
 #if SHADING_PATH_MOBILE
 		const bool bNeedsSeparateSubsurfaceLightAccumulation = UseSubsurfaceProfile(GBuffer.ShadingModelID);
 		
 		FDirectLighting Lighting = (FDirectLighting)0;
 
-		half NoL = max(0, dot(GBuffer.WorldNormal, L));
+		//move NoL up
+		//half NoL = max(0, dot(GBuffer.WorldNormal, L));
 	#if TRANSLUCENCY_NON_DIRECTIONAL
 		NoL = 1.0f;
 	#endif
 		Lighting = EvaluateBxDF(GBuffer, N, V, L, NoL, Shadow);
 
 		Lighting.Specular *= LightData.SpecularScale;
-				
-		LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		//replace with toon attenuation for shadow		
+		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, ToonAttenuation, bNeedsSeparateSubsurfaceLightAccumulation );
 		LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+
 #else // SHADING_PATH_MOBILE
 		BRANCH
 		if( Shadow.SurfaceShadow + Shadow.TransmissionShadow > 0 )
@@ -393,8 +428,10 @@ FLightAccumulator AccumulateDynamicLighting(
 			}
 
 			float3 LightingDiffuse = Diffuse_Lambert( GBuffer.DiffuseColor ) * Lighting;
-			LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation);
-		#else
+			//replace with toon shadow
+			//LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation);
+			LightAccumulator_AddSplit(LightAccumulator, LightingDiffuse, 0.0f, 0, ToonAttenuation, bNeedsSeparateSubsurfaceLightAccumulation);
+#else
 			FDirectLighting Lighting;
 
 			if (LightData.bRectLight)
@@ -424,8 +461,9 @@ FLightAccumulator AccumulateDynamicLighting(
 		#if USE_LIGHT_FUNCTION_ATLAS
 			MaskedLightColor *= GetLocalLightFunctionCommon(TranslatedWorldPosition, LightData.LightFunctionAtlasLightIndex);
 		#endif
-
-			LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+//replace with toon
+//			LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+            LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, ToonAttenuation, bNeedsSeparateSubsurfaceLightAccumulation );
 			LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 
 			LightAccumulator.EstimatedCost += 0.4f;		// add the cost of the lighting computations (should sum up to 1 form one light)

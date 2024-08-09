@@ -98,7 +98,7 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 
 	BRANCH
 	//change start
-	if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT)
+	if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
 	{
 		Lighting += GBuffer.BaseColor;
 	}

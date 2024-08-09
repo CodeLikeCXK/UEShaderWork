@@ -276,27 +276,20 @@ half3 DualSpecularGGX(half AverageRoughness, half Lobe0Roughness, half Lobe1Roug
 }
 
 
-//add a brdf for toon
-float F_Schlick_ScaleTerm(float3 SpecularColor, float VoH)
+//add new toon specular
+float CalcSpecularMask(float x, float y)
 {
-	float Fc = Pow5(1 - VoH); // 1 sub, 3 mul
-	return saturate( 50.0 * SpecularColor.g ) * Fc + (1 - Fc);
+	y+=0.3f;
+	float w = 0.05*y+0.01f;
+	float y1 = y*0.1f;
+	float y2 = y*y+w;
+	return smoothstep(1-w-y1, 1-w+y2, x);
 }
 
-//add toon specular
-float SpecularGGX_ScaleTerm(float Roughness, float3 SpecularColor, BxDFContext Context, float NoL, FAreaLight AreaLight)
+float GetToonSpecularRange(float Specular,float SpecularRangeControl)
 {
-	float a2 = Pow4(Roughness);
-	float Energy = EnergyNormalization(a2, Context.VoH, AreaLight);  
-	// Generalized microfacet specular
-	float D = D_GGX(a2, Context.NoH) * Energy;
-	float Vis = Vis_SmithJointApprox(a2, Context.NoV, NoL);        
-
-	// cel-shading version
-	float FScale = F_Schlick_ScaleTerm(SpecularColor, Context.VoH);
-	return (D * Vis) * FScale;  
+	return CalcSpecularMask(Specular,SpecularRangeControl);
 }
-
 
 FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
@@ -304,6 +297,7 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 	FDirectLighting Lighting;
 
 //replace default lit with a simple toon shader to see effect
+//20240809:shading model change,check here:https://zhuanlan.zhihu.com/p/573897188
 	#if SHADING_PATH_MOBILE
 			InitMobile(Context, N, V, L, NoL);
 	#else
@@ -311,23 +305,21 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 	#endif
 	SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
 	Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
+	
+	half3 H = normalize(V+L);
+	float NoH = saturate(dot(N,H));
 
-	// Remember GBufferD is a R8B8G8A8..so value would be clamped to 0,1, so we pass (1 / Band) from MatGraph...
-	float InvBandsInput = GBuffer.Metallic;		// 2 bands <=> each band has 0.5 width	
-	float Band = ceil(1.0f / (float)InvBandsInput);
-	float InvBands = 1.0f / Band;
-	float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
+	float3 LightColor = AreaLight.FalloffColor*Falloff;
 
-	Lighting.Diffuse = AreaLight.FalloffColor * Falloff * Diffuse_Lambert(GBuffer.BaseColor) * saturate(ValueItv * floor(NoL / InvBands));
+	//add a specular threshold
+	//use roughness to control specular range
+	float SpecularThreshold = GBuffer.Specular;
+	float SpecularRange = GBuffer.Roughness;
 
-	if (IsRectLight(AreaLight))
-		// Our Custom Shading Model is not supported in this scenario
-		Lighting.Specular = RectGGXApproxLTC(GBuffer.Roughness, GBuffer.SpecularColor, N, V, AreaLight.Rect, AreaLight.Texture);
-	else
-	{
-		float Weight = SpecularGGX_ScaleTerm(GBuffer.Roughness, GBuffer.SpecularColor, Context, NoL, AreaLight) * NoL;
-		Lighting.Specular = AreaLight.FalloffColor * Falloff * GBuffer.SpecularColor * saturate(ValueItv * floor(Weight / InvBands));
-	}
+	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor);
+
+	float ToonSpecStep = step(SpecularThreshold,GetToonSpecularRange(NoH,SpecularRange));
+	Lighting.Specular = LightColor * ToonSpecStep;
 
 	Lighting.Transmission = 0;
 	return Lighting;
@@ -471,13 +463,7 @@ BxDFContext RefractClearCoatContext(BxDFContext Context)
 }
 
 FDirectLighting ClearCoatBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
-{
-		// Remember GBufferD is a R8B8G8A8..so value would be clamped to 0,1, so we pass (1 / Band) from MatGraph...
-		float InvBandsInput = GBuffer.Metallic;		// 2 bands <=> each band has 0.5 width	
-		float Band = ceil(1.0f / (float)InvBandsInput);
-		float InvBands = 1.0f / Band;
-		float ValueItv = 1.0f / (Band - 1.0f);		// 2 bands = {0,1}, 3 bands = {0,0.5,1}, 4 bands = {0, 0.33, 0.66, 1.0}    
-	
+{	
 		//replace default clearcoatBxDF with a toon hair. Article:https://zhuanlan.zhihu.com/p/573897188
 		float3 LightColor = AreaLight.FalloffColor * Falloff;
 		float SpecularRange = GBuffer.Specular*10000;
@@ -486,7 +472,7 @@ FDirectLighting ClearCoatBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, 
 		float AnisotropicSpecular;
 		AnisotropicSpecular = saturate(KajiyaKay(GBuffer.WorldTangent,N,H,SpecularTShift,SpecularRange));
 		FDirectLighting Lighting;
-		Lighting.Diffuse = LightColor*Diffuse_Lambert(GBuffer.BaseColor)*saturate(ValueItv * floor(NoL / InvBands));
+		Lighting.Diffuse = LightColor*Diffuse_Lambert(GBuffer.BaseColor);
 		Lighting.Specular=LightColor*AnisotropicSpecular;
 		Lighting.Transmission=0;
 		return Lighting;
