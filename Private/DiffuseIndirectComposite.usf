@@ -368,7 +368,10 @@ void MainPS(
 
 	const float3 N = Material.WorldNormal;
 	const float3 V = -GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
-	const float NoV = saturate(dot(N, V));
+	//const float NoV = saturate(dot(N, V));
+
+	//replace NOV with an extra toon
+	const float NoV = saturate(abs( dot(N, V) ) + 1e-5);
 
 	// Apply diffuse indirect.
 	#if DIM_APPLY_DIFFUSE_INDIRECT
@@ -562,26 +565,51 @@ void MainPS(
 					DiffuseColor += SubsurfaceColor;
 				}
 
+				//add toon
+				if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+				{
+					//normally it should be subsurface color. Since we are using default lit, a base color could work?
+					//add return lighting to skep further calcs
+					DiffuseColor += GBuffer.BaseColor * GBuffer.SpecularColor.rgb;
+				}
+
 				if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 				{
-					float3 ClothFuzz = ExtractSubsurfaceColor(GBuffer);
-					DiffuseColor += ClothFuzz * GBuffer.CustomData.a;
+					//cloth is replaced with toon. Similar
+					//float3 ClothFuzz = ExtractSubsurfaceColor(GBuffer);
+					//DiffuseColor += ClothFuzz * GBuffer.CustomData.a;
+					float3 SubsurfaceColor = GBuffer.CustomData.xyz;
+					DiffuseColor += GBuffer.BaseColor * SubsurfaceColor;
 				}
 
 			#if USE_ENERGY_CONSERVATION
 				FBxDFEnergyTerms SpecularEnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, NoV, SpecularColor);
 				float3 EnvBRDFValue = SpecularEnergyTerms.E; // EnvBRDF accounting for multiple scattering when enabled
 				float EnergyPreservationFactor = ComputeEnergyPreservation(SpecularEnergyTerms);
-			#else
-				float3 EnvBRDFValue = EnvBRDF(SpecularColor, GBuffer.Roughness, NoV);
+			#else	
+			//replace envbrdf with a toon one
+				float3 EnvBRDFValue = EnvBRDF(SpecularColor, 1.0, NoV);
+				//float3 EnvBRDFValue = EnvBRDF(SpecularColor, GBuffer.Roughness, NoV);
 				float EnergyPreservationFactor = 1.0;
 			#endif
-
-				IndirectLighting.Diffuse = (DiffuseIndirectLighting * DiffuseColor + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
+			    if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+				{
+					IndirectLighting.Diffuse = (DiffuseIndirectLighting * GBuffer.CustomData.xyz + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
+				}
+				if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+				{
+	
+					IndirectLighting.Diffuse = (DiffuseIndirectLighting * GBuffer.SpecularColor.rgb + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
+				}
+				else
+				{
+					IndirectLighting.Diffuse = (DiffuseIndirectLighting * DiffuseColor + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
+				}
 				IndirectLighting.Transmission = 0;
 
 				#if DIM_APPLY_DIFFUSE_INDIRECT == DIM_APPLY_DIFFUSE_INDIRECT_SCREEN_PROBE_GATHER
 					RoughSpecularIndirectLighting *= Occlusion.SpecularOcclusion;
+
 					IndirectLighting.Specular = CombineRoughSpecular(GBuffer, HasBackfaceDiffuse(Material), NoV, SpecularIndirectLighting, RoughSpecularIndirectLighting, SpecularColor, EnvBRDFValue);
 				#else
 					IndirectLighting.Specular = AddContrastAndSpecularScale(SpecularIndirectLighting.xyz) * EnvBRDFValue;

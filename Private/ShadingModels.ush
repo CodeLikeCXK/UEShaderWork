@@ -298,11 +298,11 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 
 //replace default lit with a simple toon shader to see effect
 //20240809:shading model change,check here:https://zhuanlan.zhihu.com/p/573897188
-	#if SHADING_PATH_MOBILE
-			InitMobile(Context, N, V, L, NoL);
-	#else
-			Init(Context, N, V, L);
-	#endif
+	// #if SHADING_PATH_MOBILE
+	// 		InitMobile(Context, N, V, L, NoL);
+	// #else
+	// 		Init(Context, N, V, L);
+	// #endif
 	//SphereMaxNoH(Context, AreaLight.SphereSinAlpha, true);
 	//Context.NoV = saturate( abs( Context.NoV ) + 1e-5 );
 	

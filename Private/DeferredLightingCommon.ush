@@ -401,7 +401,8 @@ FLightAccumulator AccumulateDynamicLighting(
 		NoL = 1.0f;
 	#endif
 		Lighting = EvaluateBxDF(GBuffer, N, V, L, NoL, Shadow);
-
+		
+        
 		Lighting.Specular *= LightData.SpecularScale;
 		//replace with toon attenuation for shadow		
 		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
