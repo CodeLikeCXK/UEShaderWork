@@ -824,30 +824,47 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 #else
 	Init( Context, N, V, L );
 #endif
-    float3 LightColor = AreaLight.FalloffColor * Falloff;
-    //解GBuffer
-    //float SpecularRange 	= GBuffer.Metallic;
-    float ShadowRange = GBuffer.Specular;
-    float ShadowOffset  = (GBuffer.Roughness - 0.5) * 2;
-    //	float InnerLine 	= GBuffer.CustomData.a;
-    //float3 SSSColor	= ExtractSubsurfaceColor(GBuffer); //解码SSS
-	float3 SSSColor	= GBuffer.CustomData.rgb;
-    //明暗颜色
-    float3 BrightColor =GBuffer.BaseColor;
-    float3 ShadowColor = SSSColor;
-    half3 H = normalize(V + L);
-    float NoH = saturate(dot(N, H));
-   //阴影区计算
-   float SmoothStepRangeMin = 0.5 - ShadowRange;
-   float SmoothStepRangeMax = 0.501 + ShadowRange;
-   float IsShadow = smoothstep(SmoothStepRangeMin,SmoothStepRangeMax,saturate(NoL + ShadowOffset));
-   //光照计算
-   FDirectLighting Lighting;
-   Lighting.Diffuse = LightColor * Diffuse_Lambert(lerp(ShadowColor, BrightColor, IsShadow));
-   //Lighting.Specular = LightColor * BrightColor * IsShadow * InnerLineColor * step(0.2f, SpecularRange * pow(NoH, SpecularIntensity));
-   //Lighting.Specular = 0;
-   Lighting.Transmission = 0;
-   return Lighting;
+//     float3 LightColor = AreaLight.FalloffColor * Falloff;
+//     //解GBuffer
+//     //float SpecularRange 	= GBuffer.Metallic;
+//     float ShadowRange = GBuffer.Specular;
+//     float ShadowOffset  = (GBuffer.Roughness - 0.5) * 2;
+//     //	float InnerLine 	= GBuffer.CustomData.a;
+//     //float3 SSSColor	= ExtractSubsurfaceColor(GBuffer); //解码SSS
+// 	float3 SSSColor	= GBuffer.CustomData.rgb;
+//     //明暗颜色
+//     float3 BrightColor =GBuffer.BaseColor;
+//     float3 ShadowColor = SSSColor;
+//     half3 H = normalize(V + L);
+//     float NoH = saturate(dot(N, H));
+//    //阴影区计算
+//    float SmoothStepRangeMin = 0.5 - ShadowRange;
+//    float SmoothStepRangeMax = 0.501 + ShadowRange;
+//    float IsShadow = smoothstep(SmoothStepRangeMin,SmoothStepRangeMax,saturate(NoL + ShadowOffset));
+//    //光照计算
+//    FDirectLighting Lighting;
+//    Lighting.Diffuse = LightColor * Diffuse_Lambert(lerp(ShadowColor, BrightColor, IsShadow));
+//    //Lighting.Specular = LightColor * BrightColor * IsShadow * InnerLineColor * step(0.2f, SpecularRange * pow(NoH, SpecularIntensity));
+//    //Lighting.Specular = 0;
+//    Lighting.Transmission = 0;
+//    return Lighting;
+    half3 H = normalize(V+L);
+	float NoH = saturate(dot(N,H));
+
+	float3 LightColor = AreaLight.FalloffColor*Falloff;
+
+	//add a specular threshold
+	//use roughness to control specular range
+	float SpecularThreshold = GBuffer.Specular;
+	float SpecularRange = GBuffer.Roughness;
+	FDirectLighting Lighting;
+	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor);
+
+	float ToonSpecStep = step(SpecularThreshold,GetToonSpecularRange(NoH,SpecularRange));
+	Lighting.Specular = LightColor * ToonSpecStep;
+
+	Lighting.Transmission = 0;
+	return Lighting;
 }
 
 //implement simple toon model, using method in https://zhuanlan.zhihu.com/p/527672027

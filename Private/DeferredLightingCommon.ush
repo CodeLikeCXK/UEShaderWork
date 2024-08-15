@@ -322,6 +322,26 @@ float GetToonSurfaceShadow(float Shadow, float ShadowAttenuationSpeed)
 	return CalcShadowMask(Shadow,ShadowAttenuationSpeed);
 }
 
+//20240815: Add toon skin code based on https://zhuanlan.zhihu.com/p/573897188
+float3 LerpMultiFloat3(float3 Var1,float3 Var2,float3 Var3,float3 Var4,float S)
+{
+	S*=3;
+	float3 Res;
+	Res=lerp(Var1,Var2,saturate(S));
+	S--;
+	Res=lerp(Res,Var3,saturate(S));
+	S--;
+	Res=lerp(Res,Var4,saturate(S));
+	return Res;
+}
+
+float3 GetSkinShadow(float Shadow, float3 Color0)
+{
+	float3 Color1=Color0*float3(0.5,0,0);
+	float3 Color2=Color0*float3(1.0,0.5,0);
+	return LerpMultiFloat3(0,Color1,Color2,1,Shadow);
+}
+
 FLightAccumulator AccumulateDynamicLighting(
 	float3 TranslatedWorldPosition, half3 CameraVector, FGBufferData GBuffer, half AmbientOcclusion, uint ShadingModelID,
 	FDeferredLightData LightData, half4 LightAttenuation, float Dither, uint2 SVPos, 
@@ -377,14 +397,20 @@ FLightAccumulator AccumulateDynamicLighting(
 	float3 ToonAttenuation;
 	//try to use anisotropic to control shadow offset
 	float ShadowOffset = GBuffer.Anisotropy;
-	if(ShadingModelID=SHADINGMODELID_CLOTH)
+	if(ShadingModelID==SHADINGMODELID_CLOTH)
 	{
-		ShadowOffset = 0.6;
+		//need more control. Use metallic to replace aniso
+		ShadowOffset = GBuffer.Metallic;
 	}
 	ShadowOffset = (ShadowOffset-0.5)*2;
 	float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
 	//use metallic to control shadow attenuation speed
 	ToonAttenuation = GetToonSurfaceShadow(ShadowPart,GBuffer.Metallic);
+	//add toon skin in cloth
+	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	{
+		ToonAttenuation = GetSkinShadow(ToonAttenuation,GBuffer.CustomData.xyz*GBuffer.BaseColor);
+	}
 	ToonAttenuation*=MaskedLightColor*LightMask;
 	//end
 
