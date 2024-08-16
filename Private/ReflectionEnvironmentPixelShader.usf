@@ -507,8 +507,8 @@ void ReflectionEnvironmentSkyLighting(
 	uint ShadingModelID = GBuffer.ShadingModelID;
 	const bool bUnlitMaterial = ShadingModelID == SHADINGMODELID_UNLIT;
 
-	//float3 DiffuseColor = GBuffer.DiffuseColor;
-	float3 DiffuseColor = GBuffer.BaseColor;
+	float3 DiffuseColor = GBuffer.DiffuseColor;
+//	float3 DiffuseColor = GBuffer.BaseColor;
 	float3 SpecularColor = GBuffer.SpecularColor;
 	RemapClearCoatDiffuseAndSpecularColor(GBuffer, ScreenPosition, DiffuseColor, SpecularColor);
 
@@ -536,14 +536,14 @@ void ReflectionEnvironmentSkyLighting(
 		{
 			SkyLighting = float3(0.0f,0.0f,0.0f);
 			//normally it should be subsurface color. Since we are using default lit, a base color could work?
-			SkyLighting = GBuffer.BaseColor * GBuffer.SpecularColor.rgb;
+			SkyLighting = DiffuseColor * GBuffer.SpecularColor.rgb;
 		}
 		if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 		{
 			SkyLighting = float3(0.0f,0.0f,0.0f);
 			//float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
 			float3 SubsurfaceColor =  GBuffer.CustomData.xyz;
-			SkyLighting = GBuffer.BaseColor * SubsurfaceColor;
+			SkyLighting = DiffuseColor * SubsurfaceColor;
 		}
 
 		FLightAccumulator LightAccumulator = (FLightAccumulator)0;

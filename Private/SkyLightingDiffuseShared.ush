@@ -102,7 +102,7 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	{
 		//normally it should be subsurface color. Since we are using default lit, a base color could work?
 		//add return lighting to skep further calcs
-		Lighting = GBuffer.BaseColor * GBuffer.SpecularColor.rgb;
+		Lighting = GBuffer.DiffuseColor * GBuffer.SpecularColor.rgb;
 		return Lighting;
 	}
 	//change end
@@ -134,7 +134,7 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 		//cloth is replaced with toon. Similar
 		//float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
 		float3 SubsurfaceColor = GBuffer.CustomData.xyz;
-		Lighting = GBuffer.BaseColor * SubsurfaceColor;
+		Lighting = GBuffer.DiffuseColor * SubsurfaceColor;
 		return Lighting;
 	}
 
