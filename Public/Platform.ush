@@ -503,11 +503,11 @@
 // Ideally this would just be enabled for all SM4 and above feature level platforms
 // @todo metal mrt: No reason this can't work with Metal, once cross compiler is fixed
 #ifndef SUPPORTS_INDEPENDENT_SAMPLERS
-#define SUPPORTS_INDEPENDENT_SAMPLERS (SM6_PROFILE || SM5_PROFILE || METAL_MRT_PROFILE || METAL_SM5_PROFILE || METAL_SM6_PROFILE || VULKAN_PROFILE_SM5 || VULKAN_PROFILE_SM6 || VULKAN_PROFILE)
+#define SUPPORTS_INDEPENDENT_SAMPLERS (SM6_PROFILE || SM5_PROFILE || METAL_MRT_PROFILE || METAL_SM5_PROFILE || METAL_SM6_PROFILE || VULKAN_PROFILE_SM5 || VULKAN_PROFILE_SM6 || VULKAN_PROFILE || MOBILE_EMULATION ||ES3_1_PROFILE)
 #endif
 
 // Whether the platform support pixel coverage on MSAA targets (SV_Coverage).
-#define SUPPORTS_PIXEL_COVERAGE (FEATURE_LEVEL >= FEATURE_LEVEL_SM5 && !COMPILER_GLSL && !MOBILE_EMULATION)
+#define SUPPORTS_PIXEL_COVERAGE (FEATURE_LEVEL >= FEATURE_LEVEL_SM5 && !COMPILER_GLSL && MOBILE_EMULATION)
 
 // Must match C++ RHISupports4ComponentUAVReadWrite
 // D3D11 does not support multi-component loads from a UAV: "error X3676: typed UAV loads are only allowed for single-component 32-bit element types"
