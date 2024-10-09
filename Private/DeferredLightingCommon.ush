@@ -403,8 +403,15 @@ FLightAccumulator AccumulateDynamicLighting(
 		//need more control. Use metallic to replace aniso
 		ShadowOffset = GBuffer.Metallic;
 	}
-	ShadowOffset = (ShadowOffset-0.5)*2;
-	float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
+	//add extra shadow smooth based on https://zhuanlan.zhihu.com/p/717533663
+	float Smoothness = GBuffer.Roughness;
+	float LightingLevel = 0.5 - ShadowOffset;  
+    float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, NoL);
+	//add smoothness end
+	//original code
+	//ShadowOffset = (ShadowOffset-0.5)*2;
+	//float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
+	float ShadowPart = saturate(Shadow.SurfaceShadow*ToonNoL);
 	//use metallic to control shadow attenuation speed
 	ToonAttenuation = GetToonSurfaceShadow(ShadowPart,GBuffer.Metallic);
 	//add toon skin in cloth

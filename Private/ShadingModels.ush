@@ -858,8 +858,11 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 
 	//add a specular threshold
 	//use roughness to control specular range
-	float SpecularThreshold = GBuffer.Specular;
-	float SpecularRange = GBuffer.Roughness;
+	//Specular Threshold seems not working. Use GBuffer.Specular to SpecularRange. GBuffer.Roughness for smoothness. Check https://zhuanlan.zhihu.com/p/717533663
+	//float SpecularThreshold = GBuffer.Specular;
+	//float SpecularRange = GBuffer.Roughness;
+	float SpecularThreshold = 2- GBuffer.Specular;
+	float SpecularRange = GBuffer.Specular;
 	FDirectLighting Lighting;
 	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor) * HalfNoL * PI;
 
