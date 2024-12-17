@@ -407,19 +407,27 @@ FLightAccumulator AccumulateDynamicLighting(
 	float Smoothness = GBuffer.Roughness;
 	float LightingLevel = 0.5 - ShadowOffset;  
     float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, NoL);
+	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	{
+		ToonNoL = clamp(ToonNoL,0,1);
+	}
 	//add smoothness end
 	//original code
 	//ShadowOffset = (ShadowOffset-0.5)*2;
 	//float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
 	float ShadowPart = saturate(Shadow.SurfaceShadow*ToonNoL);
+	float ShadowPart_Transmission = saturate(Shadow.TransmissionShadow*ToonNoL);
 	//use metallic to control shadow attenuation speed
 	ToonAttenuation = GetToonSurfaceShadow(ShadowPart,GBuffer.Metallic);
+	ToonAttenuation_Transmission = GetToonSurfaceShadow(ShadowPart_Transmission,GBuffer.Metallic);
 	//add toon skin in cloth
 	if(ShadingModelID==SHADINGMODELID_CLOTH)
 	{
 		ToonAttenuation = GetSkinShadow(ToonAttenuation,GBuffer.CustomData.xyz*GBuffer.BaseColor);
+		ToonAttenuation_Transmission = GetSkinShadow(ToonAttenuation_Transmission,GBuffer.CustomData.xyz*GBuffer.BaseColor);
 	}
 	ToonAttenuation*=MaskedLightColor*LightMask;
+	ToonAttenuation_Transmission *=MaskedLightColor*LightMask;
 	//end
 
 
@@ -442,7 +450,7 @@ FLightAccumulator AccumulateDynamicLighting(
 		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 		//LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
 		LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, ToonAttenuation, bNeedsSeparateSubsurfaceLightAccumulation );
-		LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission,  MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+		LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission,  ToonAttenuation_Transmission, bNeedsSeparateSubsurfaceLightAccumulation );
 
 #else // SHADING_PATH_MOBILE
 		BRANCH
