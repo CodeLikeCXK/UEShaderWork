@@ -396,6 +396,7 @@ FLightAccumulator AccumulateDynamicLighting(
 
 	//add toon shadow calculation
 	float3 ToonAttenuation;
+	float3 ToonAttenuation_Transmission;
 	//try to use anisotropic to control shadow offset
 	float ShadowOffset = GBuffer.Anisotropy;
 	if(ShadingModelID==SHADINGMODELID_CLOTH)
