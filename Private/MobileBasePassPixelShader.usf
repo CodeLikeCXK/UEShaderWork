@@ -246,8 +246,17 @@ void GetPrecomputedIndirectLightingAndSkyLight(VTPageTableResult LightmapVTPageT
 
 		FThreeBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH3(DiffuseDir, 1);
 
+
+		//20241218:lerp threebad to oneband
+
 		// Compute diffuse lighting which takes the normal into account
-		OutDiffuseIndirectLighting += max(half3(0, 0, 0), DotSH3(PointIndirectLighting, DiffuseTransferSH));
+		//OutDiffuseIndirectLighting += max(half3(0, 0, 0), DotSH3(PointIndirectLighting, DiffuseTransferSH));
+		//add lerp for all part of PointIndirectLighting
+		FOneBandSHVector DiffuseTransferSH_One = lerp3BandTo1(DiffuseTransferSH);
+		FOneBandSHVectorRGB PointIndirectLighting_One = lerp3BandRGBTo1(PointIndirectLighting);
+		OutDiffuseIndirectLighting += max(half3(0, 0, 0), DotSH1(PointIndirectLighting_One, DiffuseTransferSH_One));
+
+
 
 		#if SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING
 		if (bEvaluateBackface)

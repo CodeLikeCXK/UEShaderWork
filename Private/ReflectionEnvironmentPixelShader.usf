@@ -510,7 +510,12 @@ void ReflectionEnvironmentSkyLighting(
 	float3 DiffuseColor = GBuffer.DiffuseColor;
 //	float3 DiffuseColor = GBuffer.BaseColor;
 	float3 SpecularColor = GBuffer.SpecularColor;
-	RemapClearCoatDiffuseAndSpecularColor(GBuffer, ScreenPosition, DiffuseColor, SpecularColor);
+	if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+	{
+		SpecularColor = 0.0f;
+	}
+	//since clear coat is replaced by toon hair this is not necessary?
+	//RemapClearCoatDiffuseAndSpecularColor(GBuffer, ScreenPosition, DiffuseColor, SpecularColor);
 
 	// Sample the ambient occlusion that is dynamically generated every frame.
 	float AmbientOcclusion = AmbientOcclusionTexture.SampleLevel(AmbientOcclusionSampler, BufferUV, 0).r;
@@ -532,7 +537,7 @@ void ReflectionEnvironmentSkyLighting(
 		const float CloudVolumetricAOShadow = GetCloudVolumetricAOShadow(TranslatedWorldPosition);
 		float3 SkyLighting = CloudVolumetricAOShadow * SkyLightDiffuse(GBuffer, AmbientOcclusion, BufferUV, ScreenPosition, BentNormal, DiffuseColor);
 		//add toon
-		if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
+		if(GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
 		{
 			SkyLighting = float3(0.0f,0.0f,0.0f);
 			//normally it should be subsurface color. Since we are using default lit, a base color could work?
@@ -543,7 +548,7 @@ void ReflectionEnvironmentSkyLighting(
 			SkyLighting = float3(0.0f,0.0f,0.0f);
 			//float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
 			float3 SubsurfaceColor =  GBuffer.CustomData.xyz;
-			SkyLighting = DiffuseColor * SubsurfaceColor;
+			SkyLighting = GBuffer.BaseColor * SubsurfaceColor;
 		}
 
 		FLightAccumulator LightAccumulator = (FLightAccumulator)0;
@@ -555,10 +560,11 @@ void ReflectionEnvironmentSkyLighting(
 #endif // ENABLE_DYNAMIC_SKY_LIGHT 
 
 	BRANCH
-	if (!bUnlitMaterial && ShadingModelID != SHADINGMODELID_HAIR)
+	if (!bUnlitMaterial && ShadingModelID != SHADINGMODELID_HAIR && ShadingModelID != SHADINGMODELID_CLOTH)
 	{
 		OutColor.xyz += ReflectionEnvironment(GBuffer, AmbientOcclusion, BufferUV, ScreenPosition, SvPosition, BentNormal, SpecularColor, ShadingModelID);
 	}
+
 
 #endif // SUBSTRATE_ENABLED
 }

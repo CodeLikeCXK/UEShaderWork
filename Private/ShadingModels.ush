@@ -872,6 +872,7 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 
 	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor) * ToonNoL * PI;
 
+
 	float ToonSpecStep = step(SpecularThreshold,GetToonSpecularRange(NoH,SpecularRange));
 	Lighting.Specular = LightColor * ToonSpecStep;
 

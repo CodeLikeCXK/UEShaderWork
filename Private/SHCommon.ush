@@ -49,6 +49,40 @@ struct FThreeBandSHVectorRGB
 	FThreeBandSHVector B;
 };
 
+//20241218 add lerp band function
+FOneBandSHVector LerpBandHalf4(half4 a)
+{
+	FOneBandSHVector b;
+	b.V = lerp(a.x,a.y,a.z);
+	return b; 
+}
+
+//this is for lerping members in FThreeBandSHVectorRGB
+half LerpHalf4(half4 a)
+{
+	half c;
+	c = lerp(a.x,a.y,a.z);
+	return c;
+}
+
+FOneBandSHVector lerp3BandTo1(FThreeBandSHVector a)
+{
+	FOneBandSHVector c;
+	c.V = lerp(lerp(a.V0.x,a.V0.y,a.V0.z),lerp(a.V1.x,a.V1.y,a.V1.z),a.V2);
+	return c;
+
+}
+FOneBandSHVectorRGB lerp3BandRGBTo1(FThreeBandSHVectorRGB x)
+{
+	FOneBandSHVectorRGB c;
+	c.R.V = lerp(LerpHalf4(x.R.V0),LerpHalf4(x.R.V1),x.R.V2),
+	c.G.V = lerp(LerpHalf4(x.G.V0),LerpHalf4(x.G.V1),x.G.V2),
+	c.B.V = lerp(LerpHalf4(x.B.V0),LerpHalf4(x.B.V1),x.B.V2);
+	return c;
+}
+//end
+
+
 FTwoBandSHVectorRGB MulSH(FTwoBandSHVectorRGB A, half Scalar)
 {
 	FTwoBandSHVectorRGB Result;

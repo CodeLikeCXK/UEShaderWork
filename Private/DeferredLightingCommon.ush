@@ -426,9 +426,16 @@ FLightAccumulator AccumulateDynamicLighting(
 	{
 		ToonAttenuation = GetSkinShadow(ToonAttenuation,GBuffer.CustomData.xyz*GBuffer.BaseColor);
 		ToonAttenuation_Transmission = GetSkinShadow(ToonAttenuation_Transmission,GBuffer.CustomData.xyz*GBuffer.BaseColor);
+		ToonAttenuation = ToonAttenuation > 0.5?0.8:0;
+		ToonAttenuation_Transmission = ToonAttenuation_Transmission > 0.5?0.8:0;
 	}
 	ToonAttenuation*=MaskedLightColor*LightMask;
 	ToonAttenuation_Transmission *=MaskedLightColor*LightMask;
+	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	{
+		ToonAttenuation = ToonAttenuation > 0.5?0.8:0;
+		ToonAttenuation_Transmission = ToonAttenuation_Transmission > 0.5?0.8:0;
+	}
 	//end
 
 
@@ -512,7 +519,7 @@ FLightAccumulator AccumulateDynamicLighting(
 //replace with toon
 //			LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, MaskedLightColor * Shadow.SurfaceShadow, bNeedsSeparateSubsurfaceLightAccumulation );
             LightAccumulator_AddSplit( LightAccumulator, Lighting.Diffuse, Lighting.Specular, Lighting.Diffuse, ToonAttenuation, bNeedsSeparateSubsurfaceLightAccumulation );
-			LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, MaskedLightColor * Shadow.TransmissionShadow, bNeedsSeparateSubsurfaceLightAccumulation );
+			LightAccumulator_AddSplit( LightAccumulator, Lighting.Transmission, 0.0f, Lighting.Transmission, ToonAttenuation_Transmission, bNeedsSeparateSubsurfaceLightAccumulation );
 
 			LightAccumulator.EstimatedCost += 0.4f;		// add the cost of the lighting computations (should sum up to 1 form one light)
 		#endif

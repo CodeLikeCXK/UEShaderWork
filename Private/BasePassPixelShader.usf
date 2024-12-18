@@ -449,6 +449,7 @@ void GetSkyLighting(FMaterialPixelParameters MaterialParameters, VTPageTableResu
 	#define ILCSharedSampler2 IndirectLightingCache.IndirectLightingCacheTextureSampler2
 #endif
 
+
 /** Calculates indirect lighting contribution on this object from precomputed data. */
 void GetPrecomputedIndirectLightingAndSkyLight(
 	FMaterialPixelParameters MaterialParameters, 
@@ -472,7 +473,7 @@ void GetPrecomputedIndirectLightingAndSkyLight(
 
 		#if TRANSLUCENCY_LIGHTING_VOLUMETRIC_NONDIRECTIONAL || TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_NONDIRECTIONAL
 
-			#if TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_NONDIRECTIONAL
+			#if TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_NONDIRECTIONAL 
 				FOneBandSHVectorRGB IrradianceSH;
 				IrradianceSH.R.V = BasePassInterpolants.VertexIndirectAmbient.x;
 				IrradianceSH.G.V = BasePassInterpolants.VertexIndirectAmbient.y;
@@ -486,25 +487,47 @@ void GetPrecomputedIndirectLightingAndSkyLight(
 
 		#else
 
+		//add new FOneBandSHVectorRGB for lerping
+		    FOneBandSHVectorRGB IrradianceSH_One;
+
 			#if TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_DIRECTIONAL
 				FThreeBandSHVectorRGB IrradianceSH = (FThreeBandSHVectorRGB)0;
 				IrradianceSH.R.V0 = BasePassInterpolants.VertexIndirectSH[0];
 				IrradianceSH.G.V0 = BasePassInterpolants.VertexIndirectSH[1];
 				IrradianceSH.B.V0 = BasePassInterpolants.VertexIndirectSH[2];
+				IrradianceSH_One = 
+				(lerp(IrradianceSH.R.V0,IrradianceSH.R.V1,IrradianceSH.R.V2),
+				lerp(IrradianceSH.G.V0,IrradianceSH.G.V1,IrradianceSH.G.V2),
+				lerp(IrradianceSH.B.V0,IrradianceSH.B.V1,IrradianceSH.B.V2));
 			#elif TRANSLUCENCY_LIGHTING_VOLUMETRIC_DIRECTIONAL
 				// Limit Volume Directional to SH2 for performance
-				FTwoBandSHVectorRGB IrradianceSH2 = GetVolumetricLightmapSH2(VolumetricLightmapBrickTextureUVs);
+	     		FTwoBandSHVectorRGB IrradianceSH2 = GetVolumetricLightmapSH2(VolumetricLightmapBrickTextureUVs);
 				FThreeBandSHVectorRGB IrradianceSH = (FThreeBandSHVectorRGB)0;
 				IrradianceSH.R.V0 = IrradianceSH2.R.V;
 				IrradianceSH.G.V0 = IrradianceSH2.G.V;
 				IrradianceSH.B.V0 = IrradianceSH2.B.V;
+				IrradianceSH_One = 
+				(lerp(IrradianceSH.R.V0,IrradianceSH.R.V1,IrradianceSH.R.V2),
+				lerp(IrradianceSH.G.V0,IrradianceSH.G.V1,IrradianceSH.G.V2),
+				lerp(IrradianceSH.B.V0,IrradianceSH.B.V1,IrradianceSH.B.V2));
 			#else
 				FThreeBandSHVectorRGB IrradianceSH = GetVolumetricLightmapSH3(VolumetricLightmapBrickTextureUVs);
+				//add lerping code
+				IrradianceSH_One = lerp3BandRGBTo1(IrradianceSH);
 			#endif
 
 			// Diffuse convolution
 			FThreeBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH3(DiffuseDir, 1);
-			OutDiffuseLighting = max(float3(0,0,0), DotSH3(IrradianceSH, DiffuseTransferSH)) / PI;
+			
+			//OutDiffuseLighting = max(float3(0,0,0), DotSH3(IrradianceSH, DiffuseTransferSH)) / PI;
+			
+			//20241218:lerp threebad to oneband
+			FOneBandSHVector DiffuseTransferSH_One = lerp3BandTo1(DiffuseTransferSH);
+			OutDiffuseLighting = max(float3(0,0,0), DotSH1(IrradianceSH_One, DiffuseTransferSH_One)) / PI;
+
+
+
+			//OutDiffuseLighting = max(float3(0,0,0), DotSH1(IrradianceSH, DiffuseTransferSH)) / PI;
 
 			#if SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING
 			if (bEvaluateBackface)
@@ -598,9 +621,16 @@ void GetPrecomputedIndirectLightingAndSkyLight(
 			PointIndirectLighting.B.V1 = IndirectLightingCache.IndirectLightingSHCoefficients1[2];
 			PointIndirectLighting.B.V2 = IndirectLightingCache.IndirectLightingSHCoefficients2[2];
 
-			FThreeBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH3(DiffuseDir, 1);
+ 			FThreeBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH3(DiffuseDir, 1);
 			// Compute diffuse lighting which takes the normal into account
-			OutDiffuseLighting = max(half3(0,0,0), DotSH3(PointIndirectLighting, DiffuseTransferSH));
+			//OutDiffuseLighting = max(half3(0,0,0), DotSH3(PointIndirectLighting, DiffuseTransferSH));
+
+			//20241218：lerp three to one
+
+			FOneBandSHVector DiffuseTransferSH_One = lerp3BandTo1(DiffuseTransferSH);
+			FOneBandSHVectorRGB PointIndirectLighting_One = lerp3BandRGBTo1(PointIndirectLighting);
+			OutDiffuseLighting = max(half3(0,0,0), DotSH1(PointIndirectLighting_One, DiffuseTransferSH_One));
+
 
 			#if SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING
 			if (bEvaluateBackface)
@@ -727,6 +757,7 @@ uint GetDiffuseIndirectSampleOcclusion(FGBufferData GBuffer, float3 V, float3 Wo
 #if GBUFFER_HAS_DIFFUSE_SAMPLE_OCCLUSION && !MATERIAL_SHADINGMODEL_UNLIT
 	if (MaterialAO < 1.0f)
 	{
+		
 		FSphericalGaussian HemisphereSG = Hemisphere_ToSphericalGaussian(WorldNormal);
 		FSphericalGaussian VisibleSG = BentNormalAO_ToSphericalGaussian(WorldBentNormal, MaterialAO);
 		float VisibilityThreshold = InterleavedGradientNoise(SvPosition, View.StateFrameIndexMod8);
@@ -1187,6 +1218,7 @@ void FPixelShaderInOut_MainPS(
 		}
 		#endif
 
+		//change for toon
 		#if MATERIAL_SHADINGMODEL_CLOTH
 		if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 		{

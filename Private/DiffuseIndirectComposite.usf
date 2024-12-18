@@ -609,11 +609,14 @@ void MainPS(
 
 				#if DIM_APPLY_DIFFUSE_INDIRECT == DIM_APPLY_DIFFUSE_INDIRECT_SCREEN_PROBE_GATHER
 					RoughSpecularIndirectLighting *= Occlusion.SpecularOcclusion;
-
 					IndirectLighting.Specular = CombineRoughSpecular(GBuffer, HasBackfaceDiffuse(Material), NoV, SpecularIndirectLighting, RoughSpecularIndirectLighting, SpecularColor, EnvBRDFValue);
 				#else
 					IndirectLighting.Specular = AddContrastAndSpecularScale(SpecularIndirectLighting.xyz) * EnvBRDFValue;
 				#endif
+				if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+				{
+					IndirectLighting.Specular = 0.0f;
+				}
 			}
 			}
 			#endif // SUBSTRATE_ENABLED
