@@ -342,6 +342,19 @@ float3 GetSkinShadow(float Shadow, float3 Color0)
 	return LerpMultiFloat3(0,Color1,Color2,1,Shadow);
 }
 
+float SwitchScale(float a, float b, float c, float d)
+{
+	if(a>=b)
+	{
+		a = c;
+	}
+	else
+	{
+		a = d;
+	}
+	return a;
+}
+
 FLightAccumulator AccumulateDynamicLighting(
 	float3 TranslatedWorldPosition, half3 CameraVector, FGBufferData GBuffer, half AmbientOcclusion, uint ShadingModelID,
 	FDeferredLightData LightData, half4 LightAttenuation, float Dither, uint2 SVPos, 
@@ -418,24 +431,26 @@ FLightAccumulator AccumulateDynamicLighting(
 	//float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
 	float ShadowPart = saturate(Shadow.SurfaceShadow*ToonNoL);
 	float ShadowPart_Transmission = saturate(Shadow.TransmissionShadow*ToonNoL);
-	//use metallic to control shadow attenuation speed
-	ToonAttenuation = GetToonSurfaceShadow(ShadowPart,GBuffer.Metallic);
-	ToonAttenuation_Transmission = GetToonSurfaceShadow(ShadowPart_Transmission,GBuffer.Metallic);
+	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	{
+		ShadowPart = SwitchScale(ShadowPart,0.5,0.8,0);
+		ShadowPart_Transmission = SwitchScale(ShadowPart_Transmission,0.5,0.8,0);
+
+	}
 	//add toon skin in cloth
 	if(ShadingModelID==SHADINGMODELID_CLOTH)
 	{
-		ToonAttenuation = GetSkinShadow(ToonAttenuation,GBuffer.CustomData.xyz*GBuffer.BaseColor);
-		ToonAttenuation_Transmission = GetSkinShadow(ToonAttenuation_Transmission,GBuffer.CustomData.xyz*GBuffer.BaseColor);
-		ToonAttenuation = ToonAttenuation > 0.5?0.8:0;
-		ToonAttenuation_Transmission = ToonAttenuation_Transmission > 0.5?0.8:0;
+		ToonAttenuation = GetSkinShadow(ShadowPart,GBuffer.CustomData.xyz*GBuffer.BaseColor);
+		ToonAttenuation_Transmission = GetSkinShadow(ShadowPart_Transmission,GBuffer.CustomData.xyz*GBuffer.BaseColor);
+	}
+	else
+	{
+		//use metallic to control shadow attenuation speed
+		ToonAttenuation = GetToonSurfaceShadow(ShadowPart,GBuffer.Metallic);
+		ToonAttenuation_Transmission = GetToonSurfaceShadow(ShadowPart_Transmission,GBuffer.Metallic);
 	}
 	ToonAttenuation*=MaskedLightColor*LightMask;
 	ToonAttenuation_Transmission *=MaskedLightColor*LightMask;
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
-	{
-		ToonAttenuation = ToonAttenuation > 0.5?0.8:0;
-		ToonAttenuation_Transmission = ToonAttenuation_Transmission > 0.5?0.8:0;
-	}
 	//end
 
 

@@ -487,34 +487,29 @@ void GetPrecomputedIndirectLightingAndSkyLight(
 
 		#else
 
-		//add new FOneBandSHVectorRGB for lerping
+		    //add new FOneBandSHVectorRGB for lerping
 		    FOneBandSHVectorRGB IrradianceSH_One;
+			//move IrradianceSH up here since it would be used 
+			FThreeBandSHVectorRGB IrradianceSH;
 
 			#if TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_DIRECTIONAL
-				FThreeBandSHVectorRGB IrradianceSH = (FThreeBandSHVectorRGB)0;
+				IrradianceSH = (FThreeBandSHVectorRGB)0;
 				IrradianceSH.R.V0 = BasePassInterpolants.VertexIndirectSH[0];
 				IrradianceSH.G.V0 = BasePassInterpolants.VertexIndirectSH[1];
 				IrradianceSH.B.V0 = BasePassInterpolants.VertexIndirectSH[2];
-				IrradianceSH_One = 
-				(lerp(IrradianceSH.R.V0,IrradianceSH.R.V1,IrradianceSH.R.V2),
-				lerp(IrradianceSH.G.V0,IrradianceSH.G.V1,IrradianceSH.G.V2),
-				lerp(IrradianceSH.B.V0,IrradianceSH.B.V1,IrradianceSH.B.V2));
 			#elif TRANSLUCENCY_LIGHTING_VOLUMETRIC_DIRECTIONAL
 				// Limit Volume Directional to SH2 for performance
 	     		FTwoBandSHVectorRGB IrradianceSH2 = GetVolumetricLightmapSH2(VolumetricLightmapBrickTextureUVs);
-				FThreeBandSHVectorRGB IrradianceSH = (FThreeBandSHVectorRGB)0;
+				IrradianceSH = (FThreeBandSHVectorRGB)0;
 				IrradianceSH.R.V0 = IrradianceSH2.R.V;
 				IrradianceSH.G.V0 = IrradianceSH2.G.V;
 				IrradianceSH.B.V0 = IrradianceSH2.B.V;
-				IrradianceSH_One = 
-				(lerp(IrradianceSH.R.V0,IrradianceSH.R.V1,IrradianceSH.R.V2),
-				lerp(IrradianceSH.G.V0,IrradianceSH.G.V1,IrradianceSH.G.V2),
-				lerp(IrradianceSH.B.V0,IrradianceSH.B.V1,IrradianceSH.B.V2));
 			#else
-				FThreeBandSHVectorRGB IrradianceSH = GetVolumetricLightmapSH3(VolumetricLightmapBrickTextureUVs);
-				//add lerping code
-				IrradianceSH_One = lerp3BandRGBTo1(IrradianceSH);
+				IrradianceSH = GetVolumetricLightmapSH3(VolumetricLightmapBrickTextureUVs);
 			#endif
+			//add lerping code
+			IrradianceSH_One = lerp3BandRGBTo1(IrradianceSH);
+			//modification end
 
 			// Diffuse convolution
 			FThreeBandSHVector DiffuseTransferSH = CalcDiffuseTransferSH3(DiffuseDir, 1);
