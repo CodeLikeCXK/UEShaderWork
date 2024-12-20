@@ -1126,6 +1126,10 @@ void FPixelShaderInOut_MainPS(
 	//GBuffer.SpecularColor = ComputeF0(Specular, BaseColor, Metallic);
 	//replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
 	GBuffer.SpecularColor = ComputeF0(GBuffer.SpecularColor, GBuffer.BaseColor, 0.0f);
+	#if MATERIAL_SHADINGMODEL_CLOTH
+	GBuffer.SpecularColor = 0;
+	#endif
+
 
 #if MATERIAL_NORMAL_CURVATURE_TO_ROUGHNESS
 	const float GeometricAARoughness = GetRoughnessFromNormalCurvature(MaterialParameters);

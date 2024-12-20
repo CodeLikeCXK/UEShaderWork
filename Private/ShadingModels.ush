@@ -861,7 +861,8 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 	//Specular Threshold seems not working. Use GBuffer.Specular to SpecularRange. GBuffer.Roughness for smoothness. Check https://zhuanlan.zhihu.com/p/717533663
 	//float SpecularThreshold = GBuffer.Specular;
 	//float SpecularRange = GBuffer.Roughness;
-	float SpecularThreshold = 2- GBuffer.Specular;
+	//20241218:Use 1-offset as specular threshold. How would that be like?
+	float SpecularThreshold = 1 - GBuffer.Metallic;
 	float SpecularRange = GBuffer.Specular;
 	FDirectLighting Lighting;
 
@@ -870,11 +871,15 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 	float LightingLevel = 0.5 - ToonLightOffset;  
     float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, HalfNoL);
 
-	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor) * ToonNoL * PI;
+	//add extra color
+	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor * GBuffer.CustomData.rgb) * ToonNoL * PI;
 
 
 	float ToonSpecStep = step(SpecularThreshold,GetToonSpecularRange(NoH,SpecularRange));
-	Lighting.Specular = LightColor * ToonSpecStep;
+	
+	//add shadow calculation for spec
+	float IsShadow = step(ToonLightOffset, HalfNoL * Shadow.SurfaceShadow);
+	Lighting.Specular = LightColor * ToonSpecStep * ToonNoL *IsShadow;
 
 	Lighting.Transmission = 0;
 	return Lighting;
