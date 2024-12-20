@@ -1259,6 +1259,14 @@ void FPixelShaderInOut_MainPS(
 
 		DiffuseColor += (DiffuseIndirectLighting * DiffuseColorForIndirect + SubsurfaceIndirectLighting * SubsurfaceColor) * AOMultiBounce( GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion );
 
+		#if MATERIAL_SHADINGMODEL_CLOTH
+		if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+		{
+			DiffuseColor = GBuffer.BaseColor * GBuffer.CustomData.rgb * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);
+	
+		}
+		#endif
+		
 #if MATERIAL_SHADINGMODEL_SINGLELAYERWATER
 		// Fade out diffuse as this will be handled by the single scattering lighting in water material.
 		// We do this after the just above GetPrecomputedIndirectLightingAndSkyLight to keep ambiant lighting avialable.
