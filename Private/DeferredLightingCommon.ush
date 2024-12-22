@@ -23,6 +23,10 @@
 #define ADAPTIVE_VOLUMETRIC_SHADOW_MAP 0
 #endif
 
+#ifndef ALLOW_LOCAL_LIGHT_DISTANCE_ATTENUATION
+#define ALLOW_LOCAL_LIGHT_DISTANCE_ATTENUATION 0
+#endif
+
 #if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 #include "HeterogeneousVolumes/HeterogeneousVolumesAdaptiveVolumetricShadowMapSampling.ush"
 
@@ -259,8 +263,11 @@ float GetLocalLightAttenuation(
 		LightMask = Square( saturate( 1 - Square( DistanceSqr * Square(LightData.InvRadius) ) ) );
 		// This extra attenuation has been added for supporting existing 'legacy' shading model on mobile. 
 		// This is not needed for Substrate which unifies all lighting paths
-		#if SHADING_PATH_MOBILE && !SUBSTRATE_ENABLED
-		LightMask *= 1.0f / (DistanceSqr + 1.0f);
+		#if SHADING_PATH_MOBILE && (!SUBSTRATE_ENABLED || ALLOW_LOCAL_LIGHT_DISTANCE_ATTENUATION)
+		if (!LightData.bRectLight)
+		{ 
+			LightMask *= 1.0f / (DistanceSqr + 1.0f);
+		}
 		#endif
 	}
 	else
@@ -309,6 +316,7 @@ FCapsuleLight GetCapsule( float3 ToLight, FDeferredLightData LightData )
 	return Capsule;
 }
 
+
 //add toon related functions
 
 float CalcShadowMask(float x, float y)
@@ -355,8 +363,10 @@ float SwitchScale(float a, float b, float c, float d)
 	return a;
 }
 
+
+//update for 5.5: since ShadingmodelID is removed in related function, uint ShadingmodelID is removed and replaced with GBuffer.ShadingmodelID
 FLightAccumulator AccumulateDynamicLighting(
-	float3 TranslatedWorldPosition, half3 CameraVector, FGBufferData GBuffer, half AmbientOcclusion, uint ShadingModelID,
+	float3 TranslatedWorldPosition, half3 CameraVector, FGBufferData GBuffer, half AmbientOcclusion,
 	FDeferredLightData LightData, half4 LightAttenuation, float Dither, uint2 SVPos, 
 	inout float SurfaceShadow)
 {
@@ -383,10 +393,10 @@ FLightAccumulator AccumulateDynamicLighting(
 	if (LightData.bRadialLight)
 	{
 		LightMask = GetLocalLightAttenuation( TranslatedWorldPosition, LightData, ToLight, L );
-#if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+        #if ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 		//LightAttenuation *= ComputeTransmittance(DerivedParams.TranslatedWorldPosition, LightData.TranslatedWorldPosition, 256);
 		LightAttenuation *= AVSM_SampleTransmittance(TranslatedWorldPosition, LightData.TranslatedWorldPosition);
-#endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+        #endif // ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 		MaskedLightColor *= LightMask;
 	}
 
@@ -412,7 +422,7 @@ FLightAccumulator AccumulateDynamicLighting(
 	float3 ToonAttenuation_Transmission;
 	//try to use anisotropic to control shadow offset
 	float ShadowOffset = GBuffer.Anisotropy;
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	if(GBuffer.ShadingModelID==SHADINGMODELID_CLOTH)
 	{
 		//need more control. Use metallic to replace aniso
 		ShadowOffset = GBuffer.Metallic;
@@ -421,7 +431,7 @@ FLightAccumulator AccumulateDynamicLighting(
 	float Smoothness = GBuffer.Roughness;
 	float LightingLevel = 0.5 - ShadowOffset;  
     float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, NoL);
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	if(GBuffer.ShadingModelID==SHADINGMODELID_CLOTH)
 	{
 		ToonNoL = clamp(ToonNoL,0,1);
 	}
@@ -431,14 +441,14 @@ FLightAccumulator AccumulateDynamicLighting(
 	//float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
 	float ShadowPart = saturate(Shadow.SurfaceShadow*ToonNoL);
 	float ShadowPart_Transmission = saturate(Shadow.TransmissionShadow*ToonNoL);
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	if(GBuffer.ShadingModelID==SHADINGMODELID_CLOTH)
 	{
 		ShadowPart = SwitchScale(ShadowPart,0.5,0.8,0);
 		ShadowPart_Transmission = SwitchScale(ShadowPart_Transmission,0.5,0.8,0);
 
 	}
 	//add toon skin in cloth
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
+	if(GBuffer.ShadingModelID==SHADINGMODELID_CLOTH)
 	{
 		ToonAttenuation = GetSkinShadow(ShadowPart,GBuffer.CustomData.xyz*GBuffer.BaseColor);
 		ToonAttenuation_Transmission = GetSkinShadow(ShadowPart_Transmission,GBuffer.CustomData.xyz*GBuffer.BaseColor);
@@ -546,21 +556,21 @@ FLightAccumulator AccumulateDynamicLighting(
 
 /** Calculates lighting for a given position, normal, etc with a fully featured lighting model designed for quality. */
 FDeferredLightingSplit GetDynamicLightingSplit(
-	float3 TranslatedWorldPosition, float3 CameraVector, FGBufferData GBuffer, float AmbientOcclusion, uint ShadingModelID, 
+	float3 TranslatedWorldPosition, float3 CameraVector, FGBufferData GBuffer, float AmbientOcclusion, 
 	FDeferredLightData LightData, float4 LightAttenuation, float Dither, uint2 SVPos, 
 	inout float SurfaceShadow)
 {
-	FLightAccumulator LightAccumulator = AccumulateDynamicLighting(TranslatedWorldPosition, CameraVector, GBuffer, AmbientOcclusion, ShadingModelID, LightData, LightAttenuation, Dither, SVPos, SurfaceShadow);
+	FLightAccumulator LightAccumulator = AccumulateDynamicLighting(TranslatedWorldPosition, CameraVector, GBuffer, AmbientOcclusion, LightData, LightAttenuation, Dither, SVPos, SurfaceShadow);
 	return LightAccumulator_GetResultSplit(LightAccumulator);
 }
 
 float4 GetDynamicLighting(
-	float3 TranslatedWorldPosition, float3 CameraVector, FGBufferData GBuffer, float AmbientOcclusion, uint ShadingModelID, 
+	float3 TranslatedWorldPosition, float3 CameraVector, FGBufferData GBuffer, float AmbientOcclusion, 
 	FDeferredLightData LightData, float4 LightAttenuation, float Dither, uint2 SVPos, 
 	inout float SurfaceShadow)
 {
 	FDeferredLightingSplit SplitLighting = GetDynamicLightingSplit(
-		TranslatedWorldPosition, CameraVector, GBuffer, AmbientOcclusion, ShadingModelID, 
+		TranslatedWorldPosition, CameraVector, GBuffer, AmbientOcclusion, 
 		LightData, LightAttenuation, Dither, SVPos, 
 		SurfaceShadow);
 
@@ -617,3 +627,136 @@ float3 GetSimpleDynamicLighting(float3 TranslatedWorldPosition, float3 CameraVec
 	return OutLighting;
 }
 
+float3 GetIrradianceForLight(FDeferredLightData LightData, float3 WorldNormal,	float3 TranslatedWorldPosition, bool bSupportRectLight)
+{
+	float3 LightColor = LightData.Color;
+	float3 L = LightData.Direction;
+	float3 ToLight = L;
+	float3 AreaLightFalloffColor = 1;
+	float CombinedAttenuation = 1;
+	float NoL = saturate(dot(WorldNormal, L));
+
+	if (LightData.bRadialLight)
+	{
+		FAreaLightIntegrateContext Context = (FAreaLightIntegrateContext) 0;
+		float LightMask = GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
+
+		float Attenuation = 0.0f;
+		float Roughness = 1;
+		float3 V = float3(1, 0, 0);
+
+		if (bSupportRectLight && LightData.bRectLight)
+		{
+			FRect Rect = GetRect(ToLight, LightData);
+			Attenuation = IntegrateLight(Rect);
+
+			if (IsRectVisible(Rect))
+			{
+				const FRectTexture SourceTexture = ConvertToRectTexture(LightData);
+				Context = CreateRectIntegrateContext(Roughness, WorldNormal, V, Rect, SourceTexture);
+			}
+		}
+		else
+		{
+			FCapsuleLight Capsule = GetCapsule(ToLight, LightData);
+			Capsule.DistBiasSqr = 0;
+			Context = CreateCapsuleIntegrateContext(Roughness, WorldNormal, V, Capsule, LightData.bInverseSquared);
+			Attenuation = IntegrateLight(Capsule, LightData.bInverseSquared);
+		}
+
+		CombinedAttenuation = Attenuation * LightMask;
+		AreaLightFalloffColor = Context.AreaLight.FalloffColor;
+		NoL = Context.NoL;
+	}
+
+	return LightColor * AreaLightFalloffColor * (CombinedAttenuation * NoL * LightData.DiffuseScale);
+}
+
+float GetSpotLightVolumetricSoftFading(in const FDeferredLightData LightData, float LightVolumetricSoftFadeDistance, in float3 ToLight)
+{
+	const float CosOuterCone = LightData.SpotAngles.x;
+	if (CosOuterCone > 0)
+	{
+		const float SinOuterCone = sqrt(1 - CosOuterCone * CosOuterCone);
+		const float TanOuterCone = SinOuterCone / CosOuterCone;
+
+		const float DistanceAlongSpotDir = dot(LightData.Direction, ToLight);
+		const float ApertureAtProjectedDistance = DistanceAlongSpotDir * TanOuterCone;
+		const float DistanceFromProjected = length(ToLight - LightData.Direction * DistanceAlongSpotDir);
+
+		const float Diff = ApertureAtProjectedDistance - DistanceFromProjected;
+		if (Diff < LightVolumetricSoftFadeDistance)
+		{
+			return saturate(Diff / LightVolumetricSoftFadeDistance);
+		}
+	}
+	return 1.0f;
+}
+
+float GetRectLightVolumetricSoftFading(in const FDeferredLightData LightData, in FRect Rect, in float LightVolumetricSoftFadeDistance, in float3 ToLight)
+{
+	const float LightVolumetricSoftFadeDistanceInv = 1.0f / LightVolumetricSoftFadeDistance;
+	float FinalFadeOut = 1.0f;
+
+	// Bias outward the rect light polygon to reduce alising if the voxel intersects the area light
+	const float DistanceToPlane = dot(LightData.Direction, ToLight);
+	FinalFadeOut *= saturate(DistanceToPlane * LightVolumetricSoftFadeDistanceInv);
+
+	float3 LocalToLight = mul(Rect.Axis, ToLight);
+
+	const float BarnLength = LightData.RectLightData.BarnLength;
+	const float CosTheta = LightData.RectLightData.BarnCosAngle;
+	const float SinTheta = sqrt(1.0f - CosTheta * CosTheta);
+	const float BarnLengthOrtho = BarnLength * CosTheta;
+
+	const float FadeFroxelCount = 4.0f;
+	if (DistanceToPlane < (BarnLengthOrtho + FadeFroxelCount * LightVolumetricSoftFadeDistance))
+	{
+		// Fade out progressively at barn door tip to avoid harsh transition
+		float BarnDoorTipFadeOut = saturate((DistanceToPlane - BarnLengthOrtho) / (FadeFroxelCount * LightVolumetricSoftFadeDistance));
+		// Fade out as barn door length get shorter
+		BarnDoorTipFadeOut = lerp(BarnDoorTipFadeOut, 1.0f, 1.0f - saturate(BarnLength * LightVolumetricSoftFadeDistanceInv));
+
+		const float2 Extent = float2(LightData.SourceRadius, LightData.SourceLength);
+		float BarnDoorFadeOut = 1.0f;
+		{
+			float3 PlaneO = float3(Extent.x, 0.0f, 0.0f);
+			float3 PlaneN = float3(-CosTheta, 0.0f, SinTheta);
+			float4 PlanePosX = float4(PlaneN, -dot(PlaneO, PlaneN));
+
+			float d = dot(PlanePosX, float4(LocalToLight, 1.0f));
+			BarnDoorFadeOut *= saturate(d * LightVolumetricSoftFadeDistanceInv);
+		}
+
+		{
+			float3 PlaneO = float3(-Extent.x, 0.0f, 0.0f);
+			float3 PlaneN = float3(CosTheta, 0.0f, SinTheta);
+			float4 PlaneNegX = float4(PlaneN, -dot(PlaneO, PlaneN));
+
+			float d = dot(PlaneNegX, float4(LocalToLight, 1.0f));
+			BarnDoorFadeOut *= saturate(d * LightVolumetricSoftFadeDistanceInv);
+		}
+
+		{
+			float3 PlaneO = float3(0.0f, Extent.y, 0.0f);
+			float3 PlaneN = float3(0.0f, -CosTheta, SinTheta);
+			float4 PlanePosY = float4(PlaneN, -dot(PlaneO, PlaneN));
+
+			float d = dot(PlanePosY, float4(LocalToLight, 1.0f));
+			BarnDoorFadeOut *= saturate(d * LightVolumetricSoftFadeDistanceInv);
+		}
+
+		{
+			float3 PlaneO = float3(0.0f, -Extent.y, 0.0f);
+			float3 PlaneN = float3(0.0f, CosTheta, SinTheta);
+			float4 PlaneNegY = float4(PlaneN, -dot(PlaneO, PlaneN));
+
+			float d = dot(PlaneNegY, float4(LocalToLight, 1.0f));
+			BarnDoorFadeOut *= saturate(d * LightVolumetricSoftFadeDistanceInv);
+		}
+
+		FinalFadeOut *= lerp(BarnDoorFadeOut, 1.0f, BarnDoorTipFadeOut);
+	}
+
+	return FinalFadeOut;
+}

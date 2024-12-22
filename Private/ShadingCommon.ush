@@ -30,8 +30,7 @@
 #define SHADINGMODELID_SINGLELAYERWATER		10
 #define SHADINGMODELID_THIN_TRANSLUCENT		11
 #define SHADINGMODELID_SUBSTRATE			12		// Temporary while we convert everything to Substrate
-#define SHADINGMODELID_TESTTOON             13                                     //add a new shading model using method in https://zhuanlan.zhihu.com/p/527672027
-#define SHADINGMODELID_NUM					14      //14, originally 13
+#define SHADINGMODELID_NUM					13
 #define SHADINGMODELID_MASK					0xF		// 4 bits reserved for ShadingModelID			
 
 // The flags are defined so that 0 value has no effect!

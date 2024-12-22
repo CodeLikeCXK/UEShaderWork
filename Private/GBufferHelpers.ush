@@ -2,6 +2,9 @@
 
 #pragma once
 
+#ifndef ALLOW_SSS_MATERIAL_OVERRIDE
+#define ALLOW_SSS_MATERIAL_OVERRIDE 1
+#endif
 
 #include "SceneTexturesCommon.ush"
 #include "SceneTextureParameters.ush"
@@ -311,8 +314,7 @@ void GBufferPreEncode(inout FGBufferData GBuffer, bool bChecker, float Geometric
 	}
 #endif
 
-	//GBuffer.DiffuseColor = OriginalBaseColor - OriginalBaseColor * OriginalMetallic;
-	GBuffer.DiffuseColor = OriginalBaseColor - OriginalBaseColor * 0.0f;
+	GBuffer.DiffuseColor = OriginalBaseColor - OriginalBaseColor * OriginalMetallic;
 
 #if USE_DEVELOPMENT_SHADERS
 	{
@@ -351,9 +353,9 @@ void AdjustBaseColorAndSpecularColorForSubsurfaceProfileLightingCopyHack(inout f
 {
 	// If this function is called in translucent pass, we should not modify the BaseColor, instead directly read the base color as it is. 
 	// The translucent pass is called after the main post process subsurface scattering pass, it will not affect previous logic.
-#if MATERIALBLENDING_TRANSLUCENT
+#if MATERIALBLENDING_TRANSLUCENT || !ALLOW_SSS_MATERIAL_OVERRIDE
 	return;
-#endif
+#else
 
 #if SUBSURFACE_CHANNEL_MODE == 0
 	// If SUBSURFACE_CHANNEL_MODE is 0, we can't support full-resolution lighting, so we 
@@ -373,6 +375,7 @@ void AdjustBaseColorAndSpecularColorForSubsurfaceProfileLightingCopyHack(inout f
 		SpecularColor *= !bChecker;
 		Specular *= !bChecker;
 	}
+#endif
 }
 
 #ifndef INDIRECT_SAMPLE_COUNT
@@ -433,7 +436,7 @@ void GBufferPostDecode(inout FGBufferData Ret, bool bChecker, bool bGetNormalize
 		//replace default specular color for a toon version, check here:https://zhuanlan.zhihu.com/p/573897188
 		//Ret.DiffuseColor = Ret.BaseColor - Ret.BaseColor * Ret.Metallic;
 	    Ret.DiffuseColor = Ret.BaseColor - Ret.BaseColor * 0.0f;
-
+	
 		#if USE_DEVELOPMENT_SHADERS
 		{
 			// this feature is only needed for development/editor - we can compile it out for a shipping build (see r.CompileShadersForDevelopment cvar help)

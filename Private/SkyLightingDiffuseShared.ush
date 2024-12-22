@@ -12,9 +12,6 @@
 #include "HairBsdf.ush"
 #include "HairStrands/HairStrandsEnvironmentLightingCommon.ush"
 
-#include "BRDF.ush"
-
-
 #ifndef APPLY_SKY_SHADOWING
 #define APPLY_SKY_SHADOWING 0
 #endif
@@ -96,27 +93,10 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	const float3 N = GBuffer.WorldNormal;
 	const float3 V = -normalize(mul(float3(ScreenPosition, 1), DFToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
 	const float NoV = saturate(dot(V, N));
-
 	const FBxDFEnergyTerms EnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, NoV, GBuffer.SpecularColor);
 	float3 DiffuseWeight = ComputeEnergyPreservation(EnergyTerms);
-	
 
 	BRANCH
-	//change start
-	if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT)
-	{
-		Lighting += GBuffer.BaseColor;
-	}
-	BRANCH
-	if(GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
-	{
-		//normally it should be subsurface color. Since we are using default lit, a base color could work?
-		//add return lighting to skep further calcs
-		Lighting = GBuffer.DiffuseColor * GBuffer.SpecularColor.rgb;
-		return Lighting;
-	}
-
-	//change end
 	if (GBuffer.ShadingModelID == SHADINGMODELID_TWOSIDED_FOLIAGE)
 	{
 		float3 SubsurfaceLookup = GetSkySHDiffuse(-GBuffer.WorldNormal) * View.SkyLightColor.rgb;
@@ -148,7 +128,6 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 		DiffuseColor *= GBuffer.CustomData.rgb;
 	}
 
-
 	// Compute the preconvolved incoming lighting with the bent normal direction
 	float3 DiffuseLookup = GetSkySHDiffuse(SkyVisData.SkyDiffuseLookUpNormal) * View.SkyLightColor.rgb;
 
@@ -157,7 +136,7 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	Lighting *= View.PreExposure;
 
 	//Lighting = (Texture2DSampleLevel(BentNormalAOTexture, BentNormalAOSampler, UV, 0).xyz);
-	
+
 
 	return Lighting;
 }

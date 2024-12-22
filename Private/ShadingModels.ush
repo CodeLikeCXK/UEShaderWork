@@ -14,6 +14,10 @@
 #include "ParticipatingMediaCommon.ush"
 #include "ColorSpace.ush"
 
+#ifndef HAIR_BSDF_BACKLIT
+#define HAIR_BSDF_BACKLIT 1
+#endif
+
 #if SHADING_PATH_MOBILE
 #include "MobileGGX.ush"
 
@@ -154,17 +158,18 @@ float KajiyaKay(float3 T, float3 N, half3 H, float TShift, float PowNum)
 	float SinTH = sqrt(1-TSoH*TSoH);
 	return Diratten*pow(SinTH,PowNum);
 }
+//end
+
+
 FDirectLighting HairBxDF(FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow)
 {
-
-	const float3 BsdfValue = HairShading(GBuffer, L, V, N, Shadow.TransmissionShadow, Shadow.HairTransmittance, 1, 0, uint2(0, 0));
+	const float3 BsdfValue = HairShading(GBuffer, L, V, N, Shadow.TransmissionShadow, Shadow.HairTransmittance, HAIR_BSDF_BACKLIT, 0, uint2(0, 0));
 
 	FDirectLighting Lighting;
 	Lighting.Diffuse = 0;
 	Lighting.Specular = 0;
 	Lighting.Transmission = AreaLight.FalloffColor * Falloff * BsdfValue;
 	return Lighting;
-
 }
 
 float New_a2( float a2, float SinAlpha, float VoH )
@@ -274,7 +279,6 @@ half3 DualSpecularGGX(half AverageRoughness, half Lobe0Roughness, half Lobe1Roug
 	return (D * Vis) * F;
 #endif
 }
-
 
 //add new toon specular
 float CalcSpecularMask(float x, float y)
@@ -402,6 +406,7 @@ FDirectLighting DefaultLitBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L,
 // 	Lighting.Transmission = 0;
 // 	return Lighting;
 }
+
 
 // Simple default lit model used by Lumen
 float3 SimpleShading( float3 DiffuseColor, float3 SpecularColor, float Roughness, float3 L, float3 V, half3 N )
@@ -706,6 +711,7 @@ FDirectLighting ClearCoatBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, 
 // 	return Lighting;
 }
 
+
 // HG phase function approximated
 float ApproximateHG(float cosJ, float g)
 {
@@ -817,6 +823,7 @@ FDirectLighting SubsurfaceProfileBxDF( FGBufferData GBuffer, half3 N, half3 V, h
 	return Lighting;
 }
 
+
 FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
 {
 	//replace cloth shader with toon renderer from https://zhuanlan.zhihu.com/p/647120967
@@ -882,27 +889,6 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
 	Lighting.Specular = LightColor * ToonSpecStep * ToonNoL *IsShadow;
 
 	Lighting.Transmission = 0;
-	return Lighting;
-}
-
-//implement simple toon model, using method in https://zhuanlan.zhihu.com/p/527672027
-FDirectLighting YivanToonBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, float Falloff, half NoL, FAreaLight AreaLight, FShadowTerms Shadow )
-{
-	BxDFContext Context;
-	#if SHADING_PATH_MOBILE
-		InitMobile(Context, N, V, L, NoL);
-	#else
-		Init( Context, N, V, L );
-	#endif
-	FDirectLighting Lighting = 
-	{
-		float3(0.0,0.0,0.0),
-		float3(0.0,0.0,0.0),
-		float3(0.0,0.0,0.0)
-	};
-	//use roughness to control step
-	float FalloffMask=Falloff*step(GBuffer.Roughness,NoL);
-	Lighting.Diffuse=AreaLight.FalloffColor * FalloffMask * GBuffer.DiffuseColor * (1/3.1415926);
 	return Lighting;
 }
 
@@ -1103,8 +1089,6 @@ FDirectLighting IntegrateBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, 
 			return ClothBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
 		case SHADINGMODELID_EYE:
 			return EyeBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
-		case SHADINGMODELID_TESTTOON:
-			return YivanToonBxDF( GBuffer, N, V, L, Falloff, NoL, AreaLight, Shadow );
 		default:
 			return (FDirectLighting)0;
 	}

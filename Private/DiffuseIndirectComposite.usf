@@ -59,6 +59,10 @@ RWTexture2D<float3> OutOpaqueRoughRefractionSceneColor;
 RWTexture2D<float3> OutSubSurfaceSceneColor;
 #endif
 
+// Remove a branch of code that is unused where TransformSignal() should always early exit.
+// SPIRV does not recognize that the code should be remove which adds an unnecessary parameter requirement.
+#define FORCE_IDENTICAL_COLOR_SPACE 1
+
 //------------------------------------------------------- INCLUDES
 
 #include "Common.ush"
@@ -287,12 +291,12 @@ FSubstrateDeferredLighting SubstrateIndirectLighting(
 		const bool bHasBackfaceDiffuse = SubstrateGetBSDFType(BSDF) == SUBSTRATE_BSDF_TYPE_SLAB && BSDF.HasBackScattering();
 		const FShadingOcclusion Occlusion = GetShadingOcclusion(PixelPos, ClosureIndex, V, SubstrateBSDFContext.N, Roughness, DiffuseColor, InAO);
 
-		const float3 InGlossyLighting = MixSpecularAndRoughReflections(Roughness, bHasBackfaceDiffuse, InSpecularLighting, InRoughSpecularLighting);
+		const float3 InGlossyLighting = MixSpecularAndRoughReflections(Roughness, bHasBackfaceDiffuse, InSpecularLighting, InRoughSpecularLighting * Occlusion.SpecularOcclusion);
 
 
 		FDirectLighting OutBSDF = (FDirectLighting)0;
 		OutBSDF.Diffuse  += BSDFThroughput * InDiffuseLighting * SubstrateEnvLight.DiffuseWeight * Occlusion.DiffuseOcclusion;
-		OutBSDF.Specular += BSDFThroughput * InGlossyLighting  * SubstrateEnvLight.SpecularWeight * Occlusion.SpecularOcclusion;
+		OutBSDF.Specular += BSDFThroughput * InGlossyLighting  * SubstrateEnvLight.SpecularWeight; // Note: Occlusion.SpecularOcclusion is only applied on the rough specular part, as in legacy path.
 
 		#if DIM_APPLY_DIFFUSE_INDIRECT == DIM_APPLY_DIFFUSE_INDIRECT_SCREEN_PROBE_GATHER
 		if (bHasBackfaceDiffuse && bLumenSupportBackfaceDiffuse > 0)
@@ -305,8 +309,8 @@ FSubstrateDeferredLighting SubstrateIndirectLighting(
 		#if SUBSTRATE_FASTPATH==0
 		if (any(SubstrateEnvLight.SpecularHazeWeight > 0.0f))
 		{
-			const float3 InHazeGlossyLighting = MixSpecularAndRoughReflections(SubstrateEnvLight.SpecularHazeSafeRoughness, bHasBackfaceDiffuse, InSpecularLighting, InRoughSpecularLighting);
-			OutBSDF.Specular += BSDFThroughput * SubstrateEnvLight.SpecularHazeWeight * InHazeGlossyLighting * Occlusion.SpecularOcclusion;
+			const float3 InHazeGlossyLighting = MixSpecularAndRoughReflections(SubstrateEnvLight.SpecularHazeSafeRoughness, bHasBackfaceDiffuse, InSpecularLighting, InRoughSpecularLighting * Occlusion.SpecularOcclusion);
+			OutBSDF.Specular += BSDFThroughput * SubstrateEnvLight.SpecularHazeWeight * InHazeGlossyLighting; // Note: Occlusion.SpecularOcclusion is only applied on the rough specular part, as in legacy path.
 		}
 		#endif 
 
@@ -368,7 +372,6 @@ void MainPS(
 
 	const float3 N = Material.WorldNormal;
 	const float3 V = -GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
-	//const float NoV = saturate(dot(N, V));
 
 	//replace NOV with an extra toon
 	const float NoV = saturate(abs( dot(N, V) ) + 1e-5);
@@ -586,15 +589,18 @@ void MainPS(
 				FBxDFEnergyTerms SpecularEnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, NoV, SpecularColor);
 				float3 EnvBRDFValue = SpecularEnergyTerms.E; // EnvBRDF accounting for multiple scattering when enabled
 				float EnergyPreservationFactor = ComputeEnergyPreservation(SpecularEnergyTerms);
-			#else	
+			#else
 			//replace envbrdf with a toon one
 				float3 EnvBRDFValue = EnvBRDF(SpecularColor, 1.0, NoV);
 				//float3 EnvBRDFValue = EnvBRDF(SpecularColor, GBuffer.Roughness, NoV);
 				float EnergyPreservationFactor = 1.0;
 			#endif
-			    if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+			    //modificaation for toon
+				//IndirectLighting.Diffuse = (DiffuseIndirectLighting * DiffuseColor + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
+				//5.5: Add specular back to cloth to indirect lighting to see effect
+				if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 				{
-					IndirectLighting.Diffuse = (DiffuseIndirectLighting * GBuffer.CustomData.xyz + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
+					IndirectLighting.Diffuse = (DiffuseIndirectLighting * GBuffer.SpecularColor.rgb * GBuffer.CustomData.xyz + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
 				}
 				if(GBuffer.ShadingModelID == SHADINGMODELID_DEFAULT_LIT ||GBuffer.ShadingModelID == SHADINGMODELID_CLEAR_COAT)
 				{
@@ -605,6 +611,7 @@ void MainPS(
 				{
 					IndirectLighting.Diffuse = (DiffuseIndirectLighting * DiffuseColor + BackfaceDiffuseIndirectLighting) * Occlusion.DiffuseOcclusion * EnergyPreservationFactor;
 				}
+
 				IndirectLighting.Transmission = 0;
 
 				#if DIM_APPLY_DIFFUSE_INDIRECT == DIM_APPLY_DIFFUSE_INDIRECT_SCREEN_PROBE_GATHER
@@ -613,10 +620,6 @@ void MainPS(
 				#else
 					IndirectLighting.Specular = AddContrastAndSpecularScale(SpecularIndirectLighting.xyz) * EnvBRDFValue;
 				#endif
-				if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
-				{
-					IndirectLighting.Specular = 0.0f;
-				}
 			}
 			}
 			#endif // SUBSTRATE_ENABLED
