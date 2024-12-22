@@ -140,6 +140,15 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 		SkyVisData.SkyDiffuseLookUpNormal = L;
 	}
 
+	//replace default cloth with toon treatment
+	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
+	{
+		//float3 ClothFuzz = ExtractSubsurfaceColor(GBuffer);
+		//DiffuseColor += ClothFuzz * GBuffer.CustomData.a;
+		DiffuseColor *= GBuffer.CustomData.rgb;
+	}
+
+
 	// Compute the preconvolved incoming lighting with the bent normal direction
 	float3 DiffuseLookup = GetSkySHDiffuse(SkyVisData.SkyDiffuseLookUpNormal) * View.SkyLightColor.rgb;
 
@@ -149,22 +158,6 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 
 	//Lighting = (Texture2DSampleLevel(BentNormalAOTexture, BentNormalAOSampler, UV, 0).xyz);
 	
-
-	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
-	{
-		float3 L = 0;
-		float HalfNoL = dot(N,L) * 0.5 + 0.5;
-		float Smoothness = GBuffer.Roughness;
-		float ToonLightOffset = GBuffer.Metallic;
-		float LightingLevel = 0.5 - ToonLightOffset;  
-		float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, HalfNoL);
-		//cloth is replaced with toon. Similar
-		//float3 SubsurfaceColor = ExtractSubsurfaceColor(GBuffer);
-		float3 SubsurfaceColor = GBuffer.CustomData.rgb;
-		//20241219: Weak the influence of skylight. Add ToonNoL
-		Lighting = Diffuse_Lambert(GBuffer.BaseColor * GBuffer.CustomData.rgb) * View.SkyLightColor.rgb * 0.05f * ToonNoL;
-		return Lighting;
-	}
 
 	return Lighting;
 }

@@ -510,10 +510,6 @@ void ReflectionEnvironmentSkyLighting(
 	float3 DiffuseColor = GBuffer.DiffuseColor;
 //	float3 DiffuseColor = GBuffer.BaseColor;
 	float3 SpecularColor = GBuffer.SpecularColor;
-	if(GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
-	{
-		SpecularColor = 0.0f;
-	}
 	//since clear coat is replaced by toon hair this is not necessary?
 	//RemapClearCoatDiffuseAndSpecularColor(GBuffer, ScreenPosition, DiffuseColor, SpecularColor);
 
