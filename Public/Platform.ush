@@ -549,8 +549,11 @@
 // Whether the platform supports independent texture and samplers (defined in DDSPI)
 // When enabled, different texture lookups can share samplers to allow more artist samplers in the base pass
 // Ideally this would just be enabled for all SM4 and above feature level platforms
+
+//20241224: replace sampler function with 5.4. In order to open limit for directx mobile emulation
 #ifndef SUPPORTS_INDEPENDENT_SAMPLERS
-#define SUPPORTS_INDEPENDENT_SAMPLERS 0
+//#define SUPPORTS_INDEPENDENT_SAMPLERS 0
+#define SUPPORTS_INDEPENDENT_SAMPLERS (SM6_PROFILE || SM5_PROFILE || METAL_MRT_PROFILE || METAL_SM5_PROFILE || METAL_SM6_PROFILE || VULKAN_PROFILE_SM5 || VULKAN_PROFILE_SM6 || VULKAN_PROFILE || MOBILE_EMULATION ||ES3_1_PROFILE)
 #endif
 
 // Whether the platform support pixel coverage on MSAA targets (SV_Coverage).
