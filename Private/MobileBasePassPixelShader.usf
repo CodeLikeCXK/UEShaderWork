@@ -869,7 +869,7 @@ void Main(
 	#if MATERIAL_SHADINGMODEL_CLOTH
 	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 	{
-		DiffuseColor = GBuffer.BaseColor * GBuffer.CustomData.rgb * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);
+		DiffuseColor = (GBuffer.BaseColor + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);
 
 	}
     #endif
