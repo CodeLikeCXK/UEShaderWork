@@ -421,22 +421,12 @@ FLightAccumulator AccumulateDynamicLighting(
 	float Smoothness = GBuffer.Roughness;
 	float LightingLevel = 0.5 - ShadowOffset;  
     float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, NoL);
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
-	{
-		ToonNoL = clamp(ToonNoL,0,1);
-	}
 	//add smoothness end
 	//original code
 	//ShadowOffset = (ShadowOffset-0.5)*2;
 	//float ShadowPart = saturate(Shadow.SurfaceShadow*NoL+ShadowOffset);
 	float ShadowPart = saturate(Shadow.SurfaceShadow*ToonNoL);
 	float ShadowPart_Transmission = saturate(Shadow.TransmissionShadow*ToonNoL);
-	if(ShadingModelID==SHADINGMODELID_CLOTH)
-	{
-		ShadowPart = SwitchScale(ShadowPart,0.5,0.8,0);
-		ShadowPart_Transmission = SwitchScale(ShadowPart_Transmission,0.5,0.8,0);
-
-	}
 	//add toon skin in cloth
 	if(ShadingModelID==SHADINGMODELID_CLOTH)
 	{

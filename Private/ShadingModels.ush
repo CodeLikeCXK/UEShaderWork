@@ -872,15 +872,18 @@ FDirectLighting ClothBxDF( FGBufferData GBuffer, half3 N, half3 V, half3 L, floa
     float ToonNoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, HalfNoL);
 
 	//add extra color
-	Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor * GBuffer.CustomData.rgb) * ToonNoL * PI;
+	//Lighting.Diffuse = LightColor * Diffuse_Lambert(GBuffer.BaseColor * GBuffer.CustomData.rgb) * ToonNoL * PI;
 
-
+	//20250106: Add extra color control
+	//move IsShadow UP
+	float IsShadow = step(ToonLightOffset, ToonNoL * Shadow.SurfaceShadow);
+	float3 BrightColor =GBuffer.BaseColor;
+    float3 ShadowColor = GBuffer.CustomData.rgb;
+	Lighting.Diffuse = LightColor * Diffuse_Lambert(lerp(ShadowColor, BrightColor, IsShadow));
 	float ToonSpecStep = step(SpecularThreshold,GetToonSpecularRange(NoH,SpecularRange));
-	
 	//add shadow calculation for spec
-	float IsShadow = step(ToonLightOffset, HalfNoL * Shadow.SurfaceShadow);
-	Lighting.Specular = LightColor * ToonSpecStep * ToonNoL *IsShadow;
-
+	//Lighting.Specular = LightColor * ToonSpecStep * ToonNoL *IsShadow;
+	Lighting.Specular = LightColor * ToonSpecStep *IsShadow;
 	Lighting.Transmission = 0;
 	return Lighting;
 }
