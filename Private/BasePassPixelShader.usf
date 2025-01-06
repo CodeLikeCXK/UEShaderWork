@@ -1275,7 +1275,6 @@ void FPixelShaderInOut_MainPS(
 		if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 		{
 			DiffuseColor += (GBuffer.BaseColor + SubsurfaceIndirectLighting* GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);
-	
 		}
 		#endif
 
