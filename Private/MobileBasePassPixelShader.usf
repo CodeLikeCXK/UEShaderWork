@@ -206,10 +206,11 @@ void GetSkyLighting(half3 SkyLightColor, half3 WorldNormal, bool bEvaluateBackfa
 #if ENABLE_SKY_LIGHT
 	{
 		//20250112: Add sky lighting normal change
-		#if MATERIAL_SHADINGMODEL_CLOTH
-		WorldNormal = step(0, dot(1, WorldNormal)) * 2 - 1;
+		//implement a dot-lized skylight on everything
+		//#if MATERIAL_SHADINGMODEL_CLOTH
+		WorldNormal = step(0, dot(1, WorldNormal) * 0.5 + 0.5) ;
 		WorldNormal = normalize(WorldNormal);
-		#endif		
+		//#endif		
 		half3 SkyDiffuse = GetSkySHDiffuseSimple(WorldNormal);
 		OutSkyDiffuseLighting = SkyDiffuse * SkyLightColor;	
 		//20250112:Try to change sky diffuse sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
