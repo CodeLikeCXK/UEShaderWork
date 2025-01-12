@@ -197,8 +197,20 @@ void GetSkyLighting(half3 SkyLightColor, half3 WorldNormal, bool bEvaluateBackfa
 
 #if ENABLE_SKY_LIGHT
 	{
+		//20250112: Add sky lighting normal change
+		//implement a dot-lized skylight on everything
+		//#if MATERIAL_SHADINGMODEL_CLOTH
+		WorldNormal = step(0, dot(1, WorldNormal) * 0.5 + 0.5) ;
+		WorldNormal = normalize(WorldNormal);
+		//#endif
+
 		half3 SkyDiffuse = GetSkySHDiffuseSimple(WorldNormal);
 		OutSkyDiffuseLighting = SkyDiffuse * SkyLightColor;
+
+		//20250112:Try to change sky diffuse sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
+		float3 toonedSkyLighting = 0.5 * OutSkyDiffuseLighting * float3(0, 1, 0) + OutSkyDiffuseLighting *  float3(0, -1, 0);
+		OutSkyDiffuseLighting = lerp(OutSkyDiffuseLighting, OutSkyDiffuseLighting, SkyDiffuse);
+		OutSkyDiffuseLighting = lerp(OutSkyDiffuseLighting, max(OutSkyDiffuseLighting.x, max(OutSkyDiffuseLighting.y, OutSkyDiffuseLighting.z)), SkyDiffuse); // color atten
 
 	#if MATERIAL_SHADINGMODEL_SINGLELAYERWATER
 		OutWaterDiffuseIndirectLuminance += OutSkyDiffuseLighting;
@@ -283,6 +295,11 @@ void GetPrecomputedIndirectLightingAndSkyLight(VTPageTableResult LightmapVTPageT
 	// Apply indirect lighting scale while we have only accumulated lightmaps
 	OutDiffuseIndirectLighting *= View.PrecomputedIndirectLightingColorScale;
 	OutSubsurfaceIndirectLighting *= View.PrecomputedIndirectLightingColorScale;
+
+	//20250112: Try to change DiffuseColorForIndirect sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
+	float3 toonedGI = 0.5 * OutDiffuseIndirectLighting * float3(0, 1, 0) + OutDiffuseIndirectLighting *  float3(0, -1, 0);
+	OutDiffuseIndirectLighting = lerp(toonedGI, OutDiffuseIndirectLighting, View.PrecomputedIndirectLightingColorScale);
+	OutDiffuseIndirectLighting = lerp(OutDiffuseIndirectLighting, max(OutDiffuseIndirectLighting.x, max(OutDiffuseIndirectLighting.y, OutDiffuseIndirectLighting.z)), View.PrecomputedIndirectLightingColorScale); // color atten
 
 	half3 SkyDiffuseLighting;
 	half3 SkySubsurfaceLighting;
@@ -831,16 +848,7 @@ void Main(
     //20241220: replace NoL with a toon one(halfnol)
 	//half NoL = max(0, dot(GBuffer.WorldNormal, MobileDirectionalLight.DirectionalLightDirectionAndShadowTransition.xyz));
 	float NoL = dot(GBuffer.WorldNormal,MobileDirectionalLight.DirectionalLightDirectionAndShadowTransition.xyz) * 0.5 + 0.5;
-	#if MATERIAL_SHADINGMODEL_CLOTH
-	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
-	{
-		float HalfNoL = NoL;
-		float ToonLightOffset = GBuffer.Metallic;
-		float Smoothness = GBuffer.Roughness;
-		float LightingLevel = 0.5 - ToonLightOffset;  
-		NoL = smoothstep(LightingLevel - Smoothness * 0.5f, LightingLevel + Smoothness * 0.5f, HalfNoL);
-	}
-    #endif
+
 
 	const bool bEvaluateBackface = GetShadingModelRequiresBackfaceLighting(GBuffer.ShadingModelID);
 
@@ -854,8 +862,9 @@ void Main(
 	#if MATERIAL_SHADINGMODEL_CLOTH
 	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 	{
-		DiffuseColor = (GBuffer.BaseColor + DiffuseColorForIndirect * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);
-
+		//20250112
+		DiffuseColorForIndirect = min(GBuffer.BaseColor, GBuffer.BaseColor*DiffuseIndirectLighting);
+		DiffuseColor = (DiffuseColorForIndirect + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);	
 	}
     #endif
 
