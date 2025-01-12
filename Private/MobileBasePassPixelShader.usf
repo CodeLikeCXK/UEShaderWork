@@ -873,7 +873,7 @@ void Main(
 		DiffuseIndirectLighting = lerp(toonedGI, DiffuseIndirectLighting, GBuffer.GBufferAO);
 		DiffuseIndirectLighting = lerp(DiffuseIndirectLighting, max(DiffuseIndirectLighting.x, max(DiffuseIndirectLighting.y, DiffuseIndirectLighting.z)),GBuffer.GBufferAO); // color atten
 		DiffuseIndirectLighting = min(GBuffer.BaseColor, GBuffer.BaseColor*DiffuseIndirectLighting);
-		DiffuseColor = (DiffuseColorForIndirect + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);	
+		DiffuseColor = (DiffuseIndirectLighting + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);	
 	}
     #endif
 
