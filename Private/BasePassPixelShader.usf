@@ -436,11 +436,6 @@ void GetSkyLighting(FMaterialPixelParameters MaterialParameters, VTPageTableResu
 		// Apply AO to the sky diffuse
 		OutDiffuseLighting += DiffuseLookup * (SkyVisibility * GeometryTerm);
 
-		//20250112: Try to change sky diffuse sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
-		float3 toonedSkyLighting = 0.5 * OutDiffuseLighting * float3(0, 1, 0) + OutDiffuseLighting *  float3(0, -1, 0);
-		OutDiffuseLighting = lerp(toonedSkyLighting, OutDiffuseLighting, SkyVisibility);
-		OutDiffuseLighting = lerp(OutDiffuseLighting, max(OutDiffuseLighting.x, max(OutDiffuseLighting.y, OutDiffuseLighting.z)), SkyVisibility); // color atten
-
 		#if SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING
 		if (bEvaluateBackface)
 		{
@@ -680,10 +675,6 @@ void GetPrecomputedIndirectLightingAndSkyLight(
 	// Sky lighting must contribute to IndirectIrradiance for ReflectionEnvironment lightmap mixing
 	OutDiffuseLighting += SkyDiffuseLighting;
 
-	//20250112: Try to change DiffuseColorForIndirect sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
-	float3 toonedGI = 0.5 * OutDiffuseLighting * float3(0, 1, 0) + OutDiffuseLighting *  float3(0, -1, 0);
-	OutDiffuseLighting = lerp(toonedGI, OutDiffuseLighting, View.PrecomputedIndirectLightingColorScale);
-	OutDiffuseLighting = lerp(OutDiffuseLighting, max(OutDiffuseLighting.x, max(OutDiffuseLighting.y, OutDiffuseLighting.z)), View.PrecomputedIndirectLightingColorScale); // color atten
 
 	#if HQ_TEXTURE_LIGHTMAP || LQ_TEXTURE_LIGHTMAP || CACHED_VOLUME_INDIRECT_LIGHTING || CACHED_POINT_INDIRECT_LIGHTING || PRECOMPUTED_IRRADIANCE_VOLUME_LIGHTING
 		OutIndirectIrradiance = Luminance(OutDiffuseLighting);
@@ -1280,8 +1271,12 @@ void FPixelShaderInOut_MainPS(
 		#if MATERIAL_SHADINGMODEL_CLOTH
 		if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 		{
-			DiffuseColorForIndirect = min(GBuffer.BaseColor, GBuffer.BaseColor*DiffuseIndirectLighting);
-			DiffuseColor = (DiffuseColorForIndirect + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);	
+			//20250112: Try to change DiffuseColorForIndirect sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
+			float3 toonedGI = 0.5 * DiffuseIndirectLighting * float3(0, 1, 0) + DiffuseIndirectLighting *  float3(0, -1, 0);
+			DiffuseIndirectLighting = lerp(toonedGI, DiffuseIndirectLighting, GBuffer.GBufferAO);
+			DiffuseIndirectLighting = lerp(DiffuseIndirectLighting, max(DiffuseIndirectLighting.x, max(DiffuseIndirectLighting.y, DiffuseIndirectLighting.z)),GBuffer.GBufferAO); // color atten
+			DiffuseIndirectLighting = min(GBuffer.BaseColor, GBuffer.BaseColor*DiffuseIndirectLighting);
+			DiffuseColor = (DiffuseColorForIndirect + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);
 		}
 		#endif
 		

@@ -207,11 +207,6 @@ void GetSkyLighting(half3 SkyLightColor, half3 WorldNormal, bool bEvaluateBackfa
 		half3 SkyDiffuse = GetSkySHDiffuseSimple(WorldNormal);
 		OutSkyDiffuseLighting = SkyDiffuse * SkyLightColor;
 
-		//20250112:Try to change sky diffuse sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
-		float3 toonedSkyLighting = 0.5 * OutSkyDiffuseLighting * float3(0, 1, 0) + OutSkyDiffuseLighting *  float3(0, -1, 0);
-		OutSkyDiffuseLighting = lerp(OutSkyDiffuseLighting, OutSkyDiffuseLighting, SkyDiffuse);
-		OutSkyDiffuseLighting = lerp(OutSkyDiffuseLighting, max(OutSkyDiffuseLighting.x, max(OutSkyDiffuseLighting.y, OutSkyDiffuseLighting.z)), SkyDiffuse); // color atten
-
 	#if MATERIAL_SHADINGMODEL_SINGLELAYERWATER
 		OutWaterDiffuseIndirectLuminance += OutSkyDiffuseLighting;
 	#endif
@@ -296,10 +291,6 @@ void GetPrecomputedIndirectLightingAndSkyLight(VTPageTableResult LightmapVTPageT
 	OutDiffuseIndirectLighting *= View.PrecomputedIndirectLightingColorScale;
 	OutSubsurfaceIndirectLighting *= View.PrecomputedIndirectLightingColorScale;
 
-	//20250112: Try to change DiffuseColorForIndirect sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
-	float3 toonedGI = 0.5 * OutDiffuseIndirectLighting * float3(0, 1, 0) + OutDiffuseIndirectLighting *  float3(0, -1, 0);
-	OutDiffuseIndirectLighting = lerp(toonedGI, OutDiffuseIndirectLighting, View.PrecomputedIndirectLightingColorScale);
-	OutDiffuseIndirectLighting = lerp(OutDiffuseIndirectLighting, max(OutDiffuseIndirectLighting.x, max(OutDiffuseIndirectLighting.y, OutDiffuseIndirectLighting.z)), View.PrecomputedIndirectLightingColorScale); // color atten
 
 	half3 SkyDiffuseLighting;
 	half3 SkySubsurfaceLighting;
@@ -862,7 +853,10 @@ void Main(
 	#if MATERIAL_SHADINGMODEL_CLOTH
 	if (GBuffer.ShadingModelID == SHADINGMODELID_CLOTH)
 	{
-		//20250112
+		//20250112: Try to change DiffuseColorForIndirect sampling like this: https://github.com/yuna0x0/sbox-MToon/blob/main/shaders/MToon.shader
+		float3 toonedGI = 0.5 * DiffuseIndirectLighting * float3(0, 1, 0) + DiffuseIndirectLighting *  float3(0, -1, 0);
+		DiffuseIndirectLighting = lerp(toonedGI, DiffuseIndirectLighting, GBuffer.GBufferAO);
+		DiffuseIndirectLighting = lerp(DiffuseIndirectLighting, max(DiffuseIndirectLighting.x, max(DiffuseIndirectLighting.y, DiffuseIndirectLighting.z)),GBuffer.GBufferAO); // color atten
 		DiffuseColorForIndirect = min(GBuffer.BaseColor, GBuffer.BaseColor*DiffuseIndirectLighting);
 		DiffuseColor = (DiffuseColorForIndirect + SubsurfaceIndirectLighting * GBuffer.CustomData.rgb) * AOMultiBounce(GBuffer.BaseColor, ShadingOcclusion.DiffOcclusion);	
 	}
