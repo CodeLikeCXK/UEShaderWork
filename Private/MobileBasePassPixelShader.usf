@@ -200,7 +200,7 @@ void GetSkyLighting(half3 SkyLightColor, half3 WorldNormal, bool bEvaluateBackfa
 		//20250112: Add sky lighting normal change
 		//implement a dot-lized skylight on everything
 		//#if MATERIAL_SHADINGMODEL_CLOTH
-		WorldNormal = step(0, dot(1, WorldNormal) * 0.5 + 0.5) ;
+		WorldNormal = step(0, dot(1, WorldNormal) * 0.5 + 0.5) *2 -1;
 		WorldNormal = normalize(WorldNormal);
 		//#endif
 
