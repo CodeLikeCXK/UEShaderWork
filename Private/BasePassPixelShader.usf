@@ -430,7 +430,7 @@ void GetSkyLighting(FMaterialPixelParameters MaterialParameters, VTPageTableResu
 
 					//20250112: Add sky lighting normal change
 					//#if MATERIAL_SHADINGMODEL_CLOTH
-					SkyLightingNormal = step(0, dot(SkyVisibility, WorldNormal) * 0.5 + 0.5);
+					SkyLightingNormal = step(0, dot(SkyVisibility, WorldNormal) * 0.5 + 0.5) * 2 -1;
 					SkyLightingNormal = normalize(SkyLightingNormal);
 					//#endif		
 
